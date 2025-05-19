@@ -66,7 +66,7 @@ export const login = async (req, res) => {
 
         // Generar un token de acceso
         const token = jwt.sign(
-            { id: user.id, nombre: user.nombre, rol: user.rol }, 
+            { id: user.id, nombre: user.nombre, role: user.rol }, 
             JWT_SECRET,
             { expiresIn: '8h' }
         );
@@ -82,7 +82,7 @@ export const login = async (req, res) => {
         res.status(200).json({
             id: user.id,
             nombre: user.nombre,
-            rol: user.rol, 
+            role: user.rol, 
         });
     } catch (error) {
         console.error(error);
