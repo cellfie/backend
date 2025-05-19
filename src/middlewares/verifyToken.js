@@ -12,11 +12,19 @@ export const verifyToken = (roles = []) => {
       const decoded = jwt.verify(token, JWT_SECRET)
 
       // Establecer tanto req.user como req.usuario para compatibilidad
-      req.user = decoded
-      req.usuario = decoded
+      req.user = {
+        ...decoded,
+        rol: decoded.rol,
+        role: decoded.role
+      }
+      req.usuario = {
+        ...decoded,
+        rol: decoded.rol,
+        role: decoded.role
+      }
 
       // Verificar roles, si se especificaron
-      if (roles.length > 0 && !roles.includes(decoded.rol)) {
+      if (roles.length > 0 && !roles.includes(decoded.role)) {
         return res.status(403).json({ message: "Acceso denegado, rol insuficiente" })
       }
 
