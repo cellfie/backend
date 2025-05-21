@@ -186,9 +186,11 @@ export const getReparacionById = async (req, res) => {
     // Obtener los pagos de la reparación
     const [pagos] = await pool.query(
       `
-      SELECT * FROM pagos_reparacion 
-      WHERE reparacion_id = ?
-    `,
+  SELECT pr.*, u.nombre as usuario_nombre
+  FROM pagos_reparacion pr
+  LEFT JOIN usuarios u ON pr.usuario_id = u.id
+  WHERE pr.reparacion_id = ?
+`,
       [id],
     )
 
