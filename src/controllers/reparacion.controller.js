@@ -1,6 +1,9 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
 
+// Importar la función para registrar acciones en el historial
+import { registrarAccion } from "./historial-acciones.controller.js"
+
 // Función para generar número de ticket único para reparaciones
 const generarNumeroTicket = async (puntoVentaId) => {
   const fecha = new Date()
@@ -208,7 +211,7 @@ export const getReparacionById = async (req, res) => {
   }
 }
 
-// Crear una nueva reparación
+// Modificar la función createReparacion para registrar la acción de creación
 export const createReparacion = async (req, res) => {
   // Validar los datos de entrada
   const errors = validationResult(req)
@@ -288,6 +291,9 @@ export const createReparacion = async (req, res) => {
     )
 
     const reparacionId = resultReparacion.insertId
+
+    // Registrar la acción de creación en el historial
+    await registrarAccion(reparacionId, "creacion", req.user.id, "Reparación registrada en el sistema", connection)
 
     // Insertar el equipo
     await connection.query(
@@ -399,19 +405,37 @@ export const createReparacion = async (req, res) => {
         )
 
         // Registrar pago de reparación
-        await connection.query(
+        const [resultPago] = await connection.query(
           `INSERT INTO pagos_reparacion (
             reparacion_id, monto, metodo_pago, fecha_pago, usuario_id, referencia_cuenta_corriente
           ) VALUES (?, ?, ?, NOW(), ?, ?)`,
           [reparacionId, montoPago, pago.metodo, req.user.id, resultMovimiento.insertId],
         )
+
+        // Registrar la acción de pago en el historial
+        await registrarAccion(
+          reparacionId,
+          "pago",
+          req.user.id,
+          `Pago de ${montoPago.toFixed(2)} con cuenta corriente`,
+          connection,
+        )
       } else {
         // Registrar pago normal
-        await connection.query(
+        const [resultPago] = await connection.query(
           `INSERT INTO pagos_reparacion (
             reparacion_id, monto, metodo_pago, fecha_pago, usuario_id
           ) VALUES (?, ?, ?, NOW(), ?)`,
           [reparacionId, montoPago, pago.metodo, req.user.id],
+        )
+
+        // Registrar la acción de pago en el historial
+        await registrarAccion(
+          reparacionId,
+          "pago",
+          req.user.id,
+          `Pago de ${montoPago.toFixed(2)} con ${pago.metodo}`,
+          connection,
         )
       }
     }
@@ -469,7 +493,7 @@ export const createReparacion = async (req, res) => {
   }
 }
 
-// Actualizar una reparación
+// Modificar la función updateReparacion para registrar la acción de edición
 export const updateReparacion = async (req, res) => {
   // Validar los datos de entrada
   const errors = validationResult(req)
@@ -533,6 +557,15 @@ export const updateReparacion = async (req, res) => {
       WHERE id = ?
     `,
       [totalReparacion, id],
+    )
+
+    // Registrar la acción de edición en el historial
+    await registrarAccion(
+      id,
+      "edicion",
+      req.user.id,
+      `Reparación editada: actualización de detalles y total a ${totalReparacion.toFixed(2)}`,
+      connection,
     )
 
     await connection.commit()
@@ -605,7 +638,7 @@ export const updateReparacion = async (req, res) => {
   }
 }
 
-// Actualizar el estado de una reparación
+// Modificar la función updateEstadoReparacion para registrar la acción de cambio de estado
 export const updateEstadoReparacion = async (req, res) => {
   // Validar los datos de entrada
   const errors = validationResult(req)
@@ -688,6 +721,22 @@ export const updateEstadoReparacion = async (req, res) => {
       )
     }
 
+    // Registrar la acción en el historial
+    let detallesAccion = ""
+    if (estado === "terminada") {
+      detallesAccion = "Reparación finalizada"
+      if (notas) detallesAccion += `: ${notas}`
+    } else if (estado === "entregada") {
+      detallesAccion = "Equipo entregado al cliente"
+    } else if (estado === "cancelada") {
+      detallesAccion = notas || "Reparación cancelada"
+    } else {
+      detallesAccion = `Estado cambiado a ${estado}`
+      if (notas) detallesAccion += `: ${notas}`
+    }
+
+    await registrarAccion(id, estado, req.user.id, detallesAccion, connection)
+
     await connection.commit()
 
     res.json({ message: `Reparación marcada como ${estado}` })
@@ -700,7 +749,7 @@ export const updateEstadoReparacion = async (req, res) => {
   }
 }
 
-// Cancelar una reparación
+// Modificar la función cancelarReparacion para registrar la acción de cancelación
 export const cancelarReparacion = async (req, res) => {
   // Validar los datos de entrada
   const errors = validationResult(req)
@@ -798,6 +847,9 @@ export const cancelarReparacion = async (req, res) => {
       [motivo || "No especificado", id],
     )
 
+    // Registrar la acción de cancelación en el historial
+    await registrarAccion(id, "cancelada", req.user.id, motivo || "Reparación cancelada", connection)
+
     await connection.commit()
 
     res.json({ message: "Reparación cancelada correctamente" })
@@ -810,7 +862,7 @@ export const cancelarReparacion = async (req, res) => {
   }
 }
 
-// Registrar un pago para una reparación
+// Modificar la función registrarPagoReparacion para registrar la acción de pago
 export const registrarPagoReparacion = async (req, res) => {
   // Validar los datos de entrada
   const errors = validationResult(req)
@@ -938,7 +990,7 @@ export const registrarPagoReparacion = async (req, res) => {
     }
 
     // Registrar el pago
-    await connection.query(
+    const [resultPago] = await connection.query(
       `
       INSERT INTO pagos_reparacion (
         reparacion_id, 
@@ -950,6 +1002,25 @@ export const registrarPagoReparacion = async (req, res) => {
       ) VALUES (?, ?, ?, NOW(), ?, ?)
     `,
       [id, montoNumerico, metodo_pago, req.user.id, referenciaCuentaCorriente],
+    )
+
+    // Registrar la acción de pago en el historial
+    await registrarAccion(
+      id,
+      "pago",
+      req.user.id,
+      `Pago de ${montoNumerico.toFixed(2)} con ${
+        metodo_pago === "efectivo"
+          ? "efectivo"
+          : metodo_pago === "tarjeta"
+            ? "tarjeta"
+            : metodo_pago === "transferencia"
+              ? "transferencia"
+              : metodo_pago === "cuentaCorriente"
+                ? "cuenta corriente"
+                : "método desconocido"
+      }`,
+      connection,
     )
 
     // Si con este pago se completa el total, y la reparación está terminada, preguntar si desea marcarla como entregada

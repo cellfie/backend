@@ -11,6 +11,7 @@ import {
   getEstadisticasReparaciones,
   cancelarReparacion,
 } from "../controllers/reparacion.controller.js"
+import { getReparacionCompleta, getHistorialAcciones } from "../controllers/historial-acciones.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
 const router = Router()
@@ -66,5 +67,9 @@ router.put("/:id", verifyToken(["admin", "empleado"]), validateUpdateReparacion,
 router.put("/:id/estado", verifyToken(["admin", "empleado"]), validateEstado, updateEstadoReparacion)
 router.post("/:id/pago", verifyToken(["admin", "empleado"]), validatePago, registrarPagoReparacion)
 router.post("/:id/cancelar", verifyToken(["admin", "empleado"]), validateCancelacion, cancelarReparacion)
+
+// Nuevas rutas para el historial de acciones
+router.get("/:id/completa", verifyToken(["admin", "empleado"]), getReparacionCompleta)
+router.get("/:id/historial", verifyToken(["admin", "empleado"]), getHistorialAcciones)
 
 export default router
