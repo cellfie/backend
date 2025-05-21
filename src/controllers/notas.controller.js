@@ -5,7 +5,6 @@ import { validationResult } from "express-validator"
 export const getNotas = async (req, res) => {
   try {
     const { completadas } = req.query
-    const usuario_id = req.usuario.id
 
     let sql = `
       SELECT 
@@ -16,18 +15,18 @@ export const getNotas = async (req, res) => {
         n.fecha_completada,
         n.punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre
+        u.nombre AS usuario_nombre,
+        n.usuario_id
       FROM notas n
       LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
       LEFT JOIN usuarios u ON n.usuario_id = u.id
-      WHERE n.usuario_id = ?
     `
 
-    const params = [usuario_id]
+    const params = []
 
     // Filtrar por completadas/pendientes si se especifica
     if (completadas !== undefined) {
-      sql += " AND n.completada = ?"
+      sql += " WHERE n.completada = ?"
       params.push(completadas === "true" ? 1 : 0)
     }
 
@@ -67,10 +66,11 @@ export const createNota = async (req, res) => {
         n.texto, 
         n.completada, 
         n.fecha_creacion,
-        n.fecha_completada,
+        n.fecha_completada, 
         n.punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre
+        u.nombre AS usuario_nombre,
+        n.usuario_id
       FROM notas n
       LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
       LEFT JOIN usuarios u ON n.usuario_id = u.id
@@ -97,14 +97,13 @@ export const updateNota = async (req, res) => {
 
   const { id } = req.params
   const { texto, completada } = req.body
-  const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista y pertenezca al usuario
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
+    // Verificar que la nota exista
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
 
     if (notas.length === 0) {
-      return res.status(404).json({ message: "Nota no encontrada o no tienes permiso para modificarla" })
+      return res.status(404).json({ message: "Nota no encontrada" })
     }
 
     const updateFields = []
@@ -131,10 +130,10 @@ export const updateNota = async (req, res) => {
       return res.status(400).json({ message: "No se proporcionaron campos para actualizar" })
     }
 
-    // Añadir el ID y el usuario_id a los parámetros
-    updateParams.push(id, usuario_id)
+    // Añadir el ID a los parámetros
+    updateParams.push(id)
 
-    await pool.query(`UPDATE notas SET ${updateFields.join(", ")} WHERE id = ? AND usuario_id = ?`, updateParams)
+    await pool.query(`UPDATE notas SET ${updateFields.join(", ")} WHERE id = ?`, updateParams)
 
     // Obtener la nota actualizada
     const [notasActualizadas] = await pool.query(
@@ -146,7 +145,8 @@ export const updateNota = async (req, res) => {
         n.fecha_completada,
         n.punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre
+        u.nombre AS usuario_nombre,
+        n.usuario_id
       FROM notas n
       LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
       LEFT JOIN usuarios u ON n.usuario_id = u.id
@@ -167,17 +167,16 @@ export const updateNota = async (req, res) => {
 // Eliminar una nota
 export const deleteNota = async (req, res) => {
   const { id } = req.params
-  const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista y pertenezca al usuario
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
+    // Verificar que la nota exista
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
 
     if (notas.length === 0) {
-      return res.status(404).json({ message: "Nota no encontrada o no tienes permiso para eliminarla" })
+      return res.status(404).json({ message: "Nota no encontrada" })
     }
 
-    await pool.query("DELETE FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
+    await pool.query("DELETE FROM notas WHERE id = ?", [id])
 
     res.json({ message: "Nota eliminada exitosamente" })
   } catch (error) {
@@ -189,24 +188,23 @@ export const deleteNota = async (req, res) => {
 // Marcar una nota como completada o pendiente
 export const toggleNotaCompletada = async (req, res) => {
   const { id } = req.params
-  const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista y pertenezca al usuario
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
+    // Verificar que la nota exista
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
 
     if (notas.length === 0) {
-      return res.status(404).json({ message: "Nota no encontrada o no tienes permiso para modificarla" })
+      return res.status(404).json({ message: "Nota no encontrada" })
     }
 
     const nota = notas[0]
     const nuevoEstado = nota.completada === 0 ? 1 : 0
     const fechaCompletada = nuevoEstado === 1 ? "NOW()" : "NULL"
 
-    await pool.query(
-      `UPDATE notas SET completada = ?, fecha_completada = ${fechaCompletada} WHERE id = ? AND usuario_id = ?`,
-      [nuevoEstado, id, usuario_id],
-    )
+    await pool.query(`UPDATE notas SET completada = ?, fecha_completada = ${fechaCompletada} WHERE id = ?`, [
+      nuevoEstado,
+      id,
+    ])
 
     // Obtener la nota actualizada
     const [notasActualizadas] = await pool.query(
@@ -218,7 +216,8 @@ export const toggleNotaCompletada = async (req, res) => {
         n.fecha_completada,
         n.punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre
+        u.nombre AS usuario_nombre,
+        n.usuario_id
       FROM notas n
       LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
       LEFT JOIN usuarios u ON n.usuario_id = u.id
