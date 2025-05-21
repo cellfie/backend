@@ -8,19 +8,21 @@ export const getNotas = async (req, res) => {
     const usuario_id = req.usuario.id
 
     let sql = `
-    SELECT 
-      n.id, 
-      n.texto, 
-      n.completada, 
-      n.fecha_creacion,
-      n.fecha_completada,
-      n.punto_venta_id,
-      pv.nombre AS punto_venta_nombre,
-      u.nombre AS usuario_nombre
-    FROM notas n
-    LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
-    LEFT JOIN usuarios u ON n.usuario_id = u.id
-  `
+SELECT 
+  n.id, 
+  n.texto, 
+  n.completada, 
+  n.fecha_creacion,
+  DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_creacion_formatted,
+  n.fecha_completada,
+  DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_completada_formatted,
+  n.punto_venta_id,
+  pv.nombre AS punto_venta_nombre,
+  u.nombre AS usuario_nombre
+FROM notas n
+LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
+LEFT JOIN usuarios u ON n.usuario_id = u.id
+`
 
     const params = []
 
@@ -62,18 +64,20 @@ export const createNota = async (req, res) => {
     // Obtener la nota recién creada
     const [notas] = await pool.query(
       `SELECT 
-        n.id, 
-        n.texto, 
-        n.completada, 
-        n.fecha_creacion,
-        n.fecha_completada,
-        n.punto_venta_id,
-        pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre
-      FROM notas n
-      LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
-      LEFT JOIN usuarios u ON n.usuario_id = u.id
-      WHERE n.id = ?`,
+    n.id, 
+    n.texto, 
+    n.completada, 
+    n.fecha_creacion,
+    DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_creacion_formatted,
+    n.fecha_completada,
+    DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_completada_formatted,
+    n.punto_venta_id,
+    pv.nombre AS punto_venta_nombre,
+    u.nombre AS usuario_nombre
+  FROM notas n
+  LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
+  LEFT JOIN usuarios u ON n.usuario_id = u.id
+  WHERE n.id = ?`,
       [result.insertId],
     )
 
@@ -138,18 +142,20 @@ export const updateNota = async (req, res) => {
     // Obtener la nota actualizada
     const [notasActualizadas] = await pool.query(
       `SELECT 
-        n.id, 
-        n.texto, 
-        n.completada, 
-        n.fecha_creacion, 
-        n.fecha_completada,
-        n.punto_venta_id,
-        pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre
-      FROM notas n
-      LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
-      LEFT JOIN usuarios u ON n.usuario_id = u.id
-      WHERE n.id = ?`,
+    n.id, 
+    n.texto, 
+    n.completada, 
+    n.fecha_creacion, 
+    DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_creacion_formatted,
+    n.fecha_completada,
+    DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_completada_formatted,
+    n.punto_venta_id,
+    pv.nombre AS punto_venta_nombre,
+    u.nombre AS usuario_nombre
+  FROM notas n
+  LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
+  LEFT JOIN usuarios u ON n.usuario_id = u.id
+  WHERE n.id = ?`,
       [id],
     )
 
@@ -210,18 +216,20 @@ export const toggleNotaCompletada = async (req, res) => {
     // Obtener la nota actualizada
     const [notasActualizadas] = await pool.query(
       `SELECT 
-        n.id, 
-        n.texto, 
-        n.completada, 
-        n.fecha_creacion,
-        n.fecha_completada,
-        n.punto_venta_id,
-        pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre
-      FROM notas n
-      LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
-      LEFT JOIN usuarios u ON n.usuario_id = u.id
-      WHERE n.id = ?`,
+    n.id, 
+    n.texto, 
+    n.completada, 
+    n.fecha_creacion,
+    DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_creacion_formatted,
+    n.fecha_completada,
+    DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%Y-%m-%d %H:%i:%s') as fecha_completada_formatted,
+    n.punto_venta_id,
+    pv.nombre AS punto_venta_nombre,
+    u.nombre AS usuario_nombre
+  FROM notas n
+  LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
+  LEFT JOIN usuarios u ON n.usuario_id = u.id
+  WHERE n.id = ?`,
       [id],
     )
 
