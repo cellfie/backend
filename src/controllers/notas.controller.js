@@ -5,28 +5,28 @@ import { validationResult } from "express-validator"
 export const getNotas = async (req, res) => {
   try {
     const { completadas } = req.query
+    const usuario_id = req.usuario.id
 
     let sql = `
-      SELECT 
-        n.id, 
-        n.texto, 
-        n.completada, 
-        n.fecha_creacion,
-        n.fecha_completada,
-        n.punto_venta_id,
-        pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre,
-        n.usuario_id
-      FROM notas n
-      LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
-      LEFT JOIN usuarios u ON n.usuario_id = u.id
-    `
+    SELECT 
+      n.id, 
+      n.texto, 
+      n.completada, 
+      n.fecha_creacion,
+      n.fecha_completada,
+      n.punto_venta_id,
+      pv.nombre AS punto_venta_nombre,
+      u.nombre AS usuario_nombre
+    FROM notas n
+    LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
+    LEFT JOIN usuarios u ON n.usuario_id = u.id
+  `
 
     const params = []
 
     // Filtrar por completadas/pendientes si se especifica
     if (completadas !== undefined) {
-      sql += " WHERE n.completada = ?"
+      sql += " AND n.completada = ?"
       params.push(completadas === "true" ? 1 : 0)
     }
 
@@ -66,11 +66,10 @@ export const createNota = async (req, res) => {
         n.texto, 
         n.completada, 
         n.fecha_creacion,
-        n.fecha_completada, 
+        n.fecha_completada,
         n.punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre,
-        n.usuario_id
+        u.nombre AS usuario_nombre
       FROM notas n
       LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
       LEFT JOIN usuarios u ON n.usuario_id = u.id
@@ -97,6 +96,7 @@ export const updateNota = async (req, res) => {
 
   const { id } = req.params
   const { texto, completada } = req.body
+  const usuario_id = req.usuario.id
 
   try {
     // Verificar que la nota exista
@@ -141,12 +141,11 @@ export const updateNota = async (req, res) => {
         n.id, 
         n.texto, 
         n.completada, 
-        n.fecha_creacion,
+        n.fecha_creacion, 
         n.fecha_completada,
         n.punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre,
-        n.usuario_id
+        u.nombre AS usuario_nombre
       FROM notas n
       LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
       LEFT JOIN usuarios u ON n.usuario_id = u.id
@@ -167,6 +166,7 @@ export const updateNota = async (req, res) => {
 // Eliminar una nota
 export const deleteNota = async (req, res) => {
   const { id } = req.params
+  const usuario_id = req.usuario.id
 
   try {
     // Verificar que la nota exista
@@ -188,6 +188,7 @@ export const deleteNota = async (req, res) => {
 // Marcar una nota como completada o pendiente
 export const toggleNotaCompletada = async (req, res) => {
   const { id } = req.params
+  const usuario_id = req.usuario.id
 
   try {
     // Verificar que la nota exista
@@ -216,8 +217,7 @@ export const toggleNotaCompletada = async (req, res) => {
         n.fecha_completada,
         n.punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        u.nombre AS usuario_nombre,
-        n.usuario_id
+        u.nombre AS usuario_nombre
       FROM notas n
       LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
       LEFT JOIN usuarios u ON n.usuario_id = u.id
