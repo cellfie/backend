@@ -38,16 +38,16 @@ export const getHistorialAcciones = async (req, res) => {
 
     const [historial] = await pool.query(
       `SELECT 
-        ha.id,
-        ha.tipo_accion,
-        ha.usuario_id,
-        ha.usuario_nombre,
-        ha.fecha,
-        DATE_FORMAT(ha.fecha, '%H:%i') as hora,
-        ha.detalles
-      FROM historial_acciones_reparacion ha
-      WHERE ha.reparacion_id = ?
-      ORDER BY ha.fecha ASC`,
+  ha.id,
+  ha.tipo_accion,
+  ha.usuario_id,
+  ha.usuario_nombre,
+  ha.fecha,
+  DATE_FORMAT(CONVERT_TZ(ha.fecha, '+00:00', '-03:00'), '%H:%i') as hora,
+  ha.detalles
+FROM historial_acciones_reparacion ha
+WHERE ha.reparacion_id = ?
+ORDER BY ha.fecha ASC`,
       [id],
     )
 
@@ -110,16 +110,16 @@ export const getReparacionCompleta = async (req, res) => {
     // Obtener el historial de acciones
     const [historial] = await pool.query(
       `SELECT 
-        ha.id,
-        ha.tipo_accion,
-        ha.usuario_id,
-        ha.usuario_nombre,
-        ha.fecha,
-        DATE_FORMAT(ha.fecha, '%H:%i') as hora,
-        ha.detalles
-      FROM historial_acciones_reparacion ha
-      WHERE ha.reparacion_id = ?
-      ORDER BY ha.fecha ASC`,
+  ha.id,
+  ha.tipo_accion,
+  ha.usuario_id,
+  ha.usuario_nombre,
+  ha.fecha,
+  DATE_FORMAT(CONVERT_TZ(ha.fecha, '+00:00', '-03:00'), '%H:%i') as hora,
+  ha.detalles
+FROM historial_acciones_reparacion ha
+WHERE ha.reparacion_id = ?
+ORDER BY ha.fecha ASC`,
       [id],
     )
 
