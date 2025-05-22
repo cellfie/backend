@@ -7,10 +7,7 @@ export const getRepuestos = async (req, res) => {
     const [repuestos] = await pool.query(`
             SELECT 
                 r.id, 
-                r.codigo, 
                 r.nombre,
-                r.marca,
-                r.modelo,
                 r.descripcion
             FROM repuestos r
             ORDER BY r.fecha_creacion DESC
@@ -60,10 +57,7 @@ export const getRepuestoById = async (req, res) => {
       `
             SELECT 
                 r.id, 
-                r.codigo, 
                 r.nombre,
-                r.marca,
-                r.modelo,
                 r.descripcion
             FROM repuestos r
             WHERE r.id = ?
@@ -116,7 +110,7 @@ export const createRepuesto = async (req, res) => {
     return res.status(400).json({ errors: errors.array() })
   }
 
-  const { codigo, nombre, marca, modelo, descripcion, punto_venta_id, stock } = req.body
+  const { nombre, descripcion, punto_venta_id, stock } = req.body
 
   const connection = await pool.getConnection()
 
@@ -124,10 +118,10 @@ export const createRepuesto = async (req, res) => {
     await connection.beginTransaction()
 
     // Insertar el repuesto
-    const [result] = await connection.query(
-      "INSERT INTO repuestos (codigo, nombre, marca, modelo, descripcion) VALUES (?, ?, ?, ?, ?)",
-      [codigo, nombre, marca, modelo, descripcion || null],
-    )
+    const [result] = await connection.query("INSERT INTO repuestos (nombre, descripcion) VALUES (?, ?)", [
+      nombre,
+      descripcion || null,
+    ])
 
     const repuestoId = result.insertId
 
@@ -150,10 +144,6 @@ export const createRepuesto = async (req, res) => {
     await connection.rollback()
     console.error("Error al crear repuesto:", error)
 
-    if (error.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({ message: "El código del repuesto ya existe" })
-    }
-
     res.status(500).json({ message: "Error al crear repuesto" })
   } finally {
     connection.release()
@@ -168,7 +158,7 @@ export const updateRepuesto = async (req, res) => {
   }
 
   const { id } = req.params
-  const { codigo, nombre, marca, modelo, descripcion, punto_venta_id, stock } = req.body
+  const { nombre, descripcion, punto_venta_id, stock } = req.body
 
   const connection = await pool.getConnection()
 
@@ -183,10 +173,11 @@ export const updateRepuesto = async (req, res) => {
     }
 
     // Actualizar el repuesto
-    await connection.query(
-      "UPDATE repuestos SET codigo = ?, nombre = ?, marca = ?, modelo = ?, descripcion = ? WHERE id = ?",
-      [codigo, nombre, marca, modelo, descripcion || null, id],
-    )
+    await connection.query("UPDATE repuestos SET nombre = ?, descripcion = ? WHERE id = ?", [
+      nombre,
+      descripcion || null,
+      id,
+    ])
 
     // Si se proporciona punto_venta_id y stock, actualizar el inventario
     if (punto_venta_id && stock !== undefined) {
@@ -217,11 +208,6 @@ export const updateRepuesto = async (req, res) => {
   } catch (error) {
     await connection.rollback()
     console.error("Error al actualizar repuesto:", error)
-
-    if (error.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({ message: "El código del repuesto ya existe" })
-    }
-
     res.status(500).json({ message: "Error al actualizar repuesto" })
   } finally {
     connection.release()
@@ -250,15 +236,12 @@ export const deleteRepuesto = async (req, res) => {
 // Buscar repuestos
 export const searchRepuestos = async (req, res) => {
   try {
-    const { query, marca, modelo, punto_venta_id, min_stock, max_stock } = req.query
+    const { query, punto_venta_id, min_stock, max_stock } = req.query
 
     let sql = `
             SELECT 
                 r.id, 
-                r.codigo, 
                 r.nombre,
-                r.marca,
-                r.modelo,
                 r.descripcion
             FROM repuestos r
             LEFT JOIN inventario_repuestos i ON r.id = i.repuesto_id
@@ -269,21 +252,9 @@ export const searchRepuestos = async (req, res) => {
 
     // Filtrar por término de búsqueda
     if (query) {
-      sql += ` AND (r.nombre LIKE ? OR r.codigo LIKE ? OR r.descripcion LIKE ? OR r.marca LIKE ? OR r.modelo LIKE ?)`
+      sql += ` AND (r.nombre LIKE ? OR r.descripcion LIKE ?)`
       const searchTerm = `%${query}%`
-      params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
-    }
-
-    // Filtrar por marca
-    if (marca) {
-      sql += ` AND r.marca LIKE ?`
-      params.push(`%${marca}%`)
-    }
-
-    // Filtrar por modelo
-    if (modelo) {
-      sql += ` AND r.modelo LIKE ?`
-      params.push(`%${modelo}%`)
+      params.push(searchTerm, searchTerm)
     }
 
     // Filtrar por punto de venta

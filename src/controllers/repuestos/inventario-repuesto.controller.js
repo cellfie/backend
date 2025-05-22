@@ -9,10 +9,7 @@ export const getInventarioRepuestos = async (req, res) => {
                 i.repuesto_id,
                 i.punto_venta_id,
                 i.stock,
-                r.codigo,
                 r.nombre AS repuesto_nombre,
-                r.marca,
-                r.modelo,
                 pv.nombre AS punto_venta_nombre
             FROM inventario_repuestos i
             JOIN repuestos r ON i.repuesto_id = r.id
