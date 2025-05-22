@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getTipoCambio,setTipoCambio } from '../controllers/tipoCambio.controller.js';
+import { getTipoCambio, setTipoCambio, getHistorialTipoCambio } from '../controllers/tipoCambio.controller.js';
 import { verifyToken } from '../middlewares/verifyToken.js';
 import { check } from 'express-validator';
 
@@ -12,10 +12,12 @@ router.use(verifyToken());
 const validateTipoCambio = [
     check('valor').isNumeric().withMessage('El valor debe ser un número')
         .custom(value => value > 0).withMessage('El valor debe ser mayor a cero'),
+    check('notas').optional().isString().withMessage('Las notas deben ser texto')
 ];
 
 // Rutas
 router.get('/', getTipoCambio);
 router.put('/', validateTipoCambio, setTipoCambio);
+router.get('/historial', getHistorialTipoCambio);
 
 export default router;
