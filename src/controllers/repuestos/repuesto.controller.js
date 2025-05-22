@@ -112,12 +112,25 @@ export const createRepuesto = async (req, res) => {
 
   const { nombre, descripcion, punto_venta_id, stock } = req.body
 
+  // Validaciones manuales adicionales
+  if (!nombre || nombre.trim() === "") {
+    return res.status(400).json({ message: "El nombre es obligatorio" })
+  }
+
+  if (!punto_venta_id) {
+    return res.status(400).json({ message: "El punto de venta es obligatorio" })
+  }
+
+  if (stock !== undefined && (isNaN(stock) || stock < 0)) {
+    return res.status(400).json({ message: "El stock debe ser un número no negativo" })
+  }
+
   const connection = await pool.getConnection()
 
   try {
     await connection.beginTransaction()
 
-    // Insertar el repuesto
+    // Insertar el repuesto (modelo simplificado)
     const [result] = await connection.query("INSERT INTO repuestos (nombre, descripcion) VALUES (?, ?)", [
       nombre,
       descripcion || null,
@@ -127,6 +140,14 @@ export const createRepuesto = async (req, res) => {
 
     // Si se proporciona punto_venta_id y stock, actualizar el inventario
     if (punto_venta_id && stock !== undefined) {
+      // Verificar si el punto de venta existe
+      const [puntosVenta] = await connection.query("SELECT id FROM puntos_venta WHERE id = ?", [punto_venta_id])
+
+      if (puntosVenta.length === 0) {
+        await connection.rollback()
+        return res.status(400).json({ message: "El punto de venta especificado no existe" })
+      }
+
       await connection.query("INSERT INTO inventario_repuestos (repuesto_id, punto_venta_id, stock) VALUES (?, ?, ?)", [
         repuestoId,
         punto_venta_id,
@@ -160,6 +181,11 @@ export const updateRepuesto = async (req, res) => {
   const { id } = req.params
   const { nombre, descripcion, punto_venta_id, stock } = req.body
 
+  // Validaciones manuales adicionales
+  if (!nombre || nombre.trim() === "") {
+    return res.status(400).json({ message: "El nombre es obligatorio" })
+  }
+
   const connection = await pool.getConnection()
 
   try {
@@ -172,7 +198,7 @@ export const updateRepuesto = async (req, res) => {
       return res.status(404).json({ message: "Repuesto no encontrado" })
     }
 
-    // Actualizar el repuesto
+    // Actualizar el repuesto (modelo simplificado)
     await connection.query("UPDATE repuestos SET nombre = ?, descripcion = ? WHERE id = ?", [
       nombre,
       descripcion || null,
@@ -181,6 +207,14 @@ export const updateRepuesto = async (req, res) => {
 
     // Si se proporciona punto_venta_id y stock, actualizar el inventario
     if (punto_venta_id && stock !== undefined) {
+      // Verificar si el punto de venta existe
+      const [puntosVenta] = await connection.query("SELECT id FROM puntos_venta WHERE id = ?", [punto_venta_id])
+
+      if (puntosVenta.length === 0) {
+        await connection.rollback()
+        return res.status(400).json({ message: "El punto de venta especificado no existe" })
+      }
+
       // Verificar si ya existe un registro de inventario para este repuesto y punto de venta
       const [inventario] = await connection.query(
         "SELECT * FROM inventario_repuestos WHERE repuesto_id = ? AND punto_venta_id = ?",

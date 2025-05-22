@@ -20,11 +20,12 @@ const router = Router()
 // Middleware para verificar token en todas las rutas
 router.use(verifyToken())
 
-// Validaciones para crear/actualizar repuesto (nombre, código y marca son obligatorios)
+// Validaciones actualizadas para el modelo simplificado (solo nombre es obligatorio)
 const validateRepuesto = [
-  check("codigo").notEmpty().withMessage("El código es obligatorio"),
-  check("nombre").notEmpty().withMessage("El nombre es obligatorio"),
-  check("marca").notEmpty().withMessage("La marca es obligatoria"),
+  check("nombre")
+    .notEmpty()
+    .withMessage("El nombre es obligatorio"),
+  // Ya no validamos código ni marca porque los hemos eliminado del modelo
 ]
 
 // Validaciones para actualizar inventario
