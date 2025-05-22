@@ -7,12 +7,21 @@ export const getTipoCambio = async (req, res) => {
     )
 
     if (rows.length === 0) {
-      return res.json({ valor: 0 })
+      // Si no hay registro, crear uno por defecto
+      const [insertResult] = await pool.query(
+        "INSERT INTO tipo_cambio (valor, activo, fecha) VALUES (1000.00, TRUE, NOW())",
+      )
+
+      return res.json({
+        id: insertResult.insertId,
+        valor: 1000.0,
+        fecha: new Date(),
+      })
     }
 
     res.json({
       id: rows[0].id,
-      valor: rows[0].valor,
+      valor: Number.parseFloat(rows[0].valor),
       fecha: rows[0].fecha,
     })
   } catch (error) {
@@ -32,59 +41,61 @@ export const setTipoCambio = async (req, res) => {
       return res.status(400).json({ message: "El valor debe ser un número mayor a cero" })
     }
 
-    // Iniciar una transacción
+    // Redondear a 2 decimales
+    const roundedValue = Math.round(numericValue * 100) / 100
+
+    // Obtener conexión y usar transacción simple
     const connection = await pool.getConnection()
-    await connection.beginTransaction()
 
     try {
-      // Obtener el tipo de cambio actual
-      const [currentRate] = await connection.query(
-        "SELECT id, valor FROM tipo_cambio WHERE activo = TRUE ORDER BY id DESC LIMIT 1",
-      )
+      await connection.beginTransaction()
 
-      let tipoCambioId
+      // Buscar el registro activo actual
+      const [currentRows] = await connection.query("SELECT id FROM tipo_cambio WHERE activo = TRUE LIMIT 1")
 
-      if (currentRate.length > 0) {
-        // Si existe un registro activo, actualizarlo
-        tipoCambioId = currentRate[0].id
-
+      if (currentRows.length > 0) {
         // Actualizar el registro existente
         await connection.query(
-          "UPDATE tipo_cambio SET valor = ?, usuario_id = ?, fecha = CONVERT_TZ(NOW(), '+00:00', '-03:00'), notas = ? WHERE id = ?",
-          [numericValue, usuario_id || null, notas || null, tipoCambioId],
+          `UPDATE tipo_cambio 
+           SET valor = ?, 
+               usuario_id = ?, 
+               fecha = NOW(), 
+               notas = ? 
+           WHERE id = ?`,
+          [roundedValue, usuario_id || null, notas || null, currentRows[0].id],
         )
       } else {
-        // Si no existe un registro activo, crear uno nuevo
-        const [insertResult] = await connection.query(
-          "INSERT INTO tipo_cambio (valor, usuario_id, notas, activo, fecha) VALUES (?, ?, ?, TRUE, CONVERT_TZ(NOW(), '+00:00', '-03:00'))",
-          [numericValue, usuario_id || null, notas || null],
+        // Crear nuevo registro si no existe ninguno activo
+        await connection.query(
+          `INSERT INTO tipo_cambio (valor, usuario_id, notas, activo, fecha) 
+           VALUES (?, ?, ?, TRUE, NOW())`,
+          [roundedValue, usuario_id || null, notas || null],
         )
-
-        tipoCambioId = insertResult.insertId
       }
 
-      // Actualizar el tipo de cambio en todos los equipos no vendidos
-      await connection.query("UPDATE equipos SET tipo_cambio = ? WHERE vendido = 0", [numericValue])
+      // Actualizar equipos no vendidos
+      await connection.query("UPDATE equipos SET tipo_cambio = ? WHERE vendido = 0", [roundedValue])
 
-      // Confirmar la transacción
       await connection.commit()
 
       res.json({
+        success: true,
         message: "Tipo de cambio actualizado correctamente",
-        id: tipoCambioId,
-        valor: numericValue,
+        valor: roundedValue,
         fecha: new Date(),
       })
     } catch (error) {
-      // Si hay un error, revertir la transacción
       await connection.rollback()
       throw error
     } finally {
-      // Liberar la conexión
       connection.release()
     }
   } catch (error) {
     console.error("Error al actualizar tipo de cambio:", error)
-    res.status(500).json({ message: "Error al actualizar tipo de cambio", error: error.message })
+    res.status(500).json({
+      success: false,
+      message: "Error al actualizar tipo de cambio",
+      error: error.message,
+    })
   }
 }
