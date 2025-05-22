@@ -2,7 +2,6 @@ import pool from "../db.js"
 
 export const getTipoCambio = async (req, res) => {
   try {
-    // Obtener el tipo de cambio activo
     const [rows] = await pool.query(
       "SELECT id, valor, fecha FROM tipo_cambio WHERE activo = TRUE ORDER BY fecha DESC LIMIT 1"
     )
@@ -24,7 +23,7 @@ export const getTipoCambio = async (req, res) => {
 
 export const setTipoCambio = async (req, res) => {
   const { valor, notas } = req.body
-  const usuario_id = req.usuario?.id // Asumiendo que el middleware de autenticación agrega el usuario al request
+  const usuario_id = req.usuario?.id
 
   try {
     // Validar que el valor sea un número válido
@@ -33,20 +32,48 @@ export const setTipoCambio = async (req, res) => {
       return res.status(400).json({ message: "El valor debe ser un número mayor a cero" })
     }
 
-    // Iniciar una transacción para asegurar que todas las operaciones se completen o ninguna
+    // Iniciar una transacción
     const connection = await pool.getConnection()
     await connection.beginTransaction()
 
     try {
-      // Obtener el tipo de cambio actual para el historial
+      // Obtener el tipo de cambio actual
       const [currentRate] = await connection.query(
         "SELECT id, valor FROM tipo_cambio WHERE activo = TRUE ORDER BY fecha DESC LIMIT 1"
       )
       
-      const currentValue = currentRate.length > 0 ? currentRate[0].valor : 0
+      const currentValue = currentRate.length > 0 ? parseFloat(currentRate[0].valor) : 0
       const currentId = currentRate.length > 0 ? currentRate[0].id : null
 
-      // Desactivar el tipo de cambio actual (en lugar de eliminarlo)
+      // Verificar si el valor es el mismo que el actual
+      if (Math.abs(currentValue - numericValue) < 0.001) {
+        // Si el valor es el mismo, no hacemos nada y devolvemos éxito
+        await connection.rollback()
+        connection.release()
+        return res.json({ 
+          message: "El tipo de cambio ya tiene ese valor", 
+          id: currentId,
+          valor: currentValue,
+          fecha: new Date(),
+          noChange: true
+        })
+      }
+
+      // Verificar si hay una actualización reciente (en los últimos 5 segundos)
+      const [recentUpdates] = await connection.query(
+        "SELECT COUNT(*) as count FROM tipo_cambio WHERE fecha > DATE_SUB(NOW(), INTERVAL 5 SECOND)"
+      )
+      
+      if (recentUpdates[0].count > 0) {
+        // Si hay actualizaciones recientes, rechazamos la solicitud
+        await connection.rollback()
+        connection.release()
+        return res.status(429).json({ 
+          message: "Demasiadas actualizaciones en poco tiempo. Por favor, espera unos segundos." 
+        })
+      }
+
+      // Desactivar el tipo de cambio actual
       if (currentId) {
         await connection.query(
           "UPDATE tipo_cambio SET activo = FALSE WHERE id = ?", 
@@ -56,25 +83,13 @@ export const setTipoCambio = async (req, res) => {
 
       // Crear un nuevo registro con el nuevo valor
       const [insertResult] = await connection.query(
-        "INSERT INTO tipo_cambio (valor, usuario_id, notas) VALUES (?, ?, ?)", 
+        "INSERT INTO tipo_cambio (valor, usuario_id, notas, activo) VALUES (?, ?, ?, TRUE)", 
         [numericValue, usuario_id || null, notas || null]
       )
       
       const newId = insertResult.insertId
 
-      // Registrar en el historial (si existe la tabla)
-      try {
-        await connection.query(
-          "INSERT INTO historial_tipo_cambio (valor_anterior, valor_nuevo, usuario_id) VALUES (?, ?, ?)",
-          [currentValue, numericValue, usuario_id || null]
-        )
-      } catch (historyError) {
-        // Si la tabla no existe, simplemente continuamos
-        console.log("Nota: La tabla historial_tipo_cambio no existe o hubo un error al insertar:", historyError)
-      }
-
       // Actualizar el tipo de cambio en todos los equipos no vendidos
-      // Esta operación podría ser costosa si hay muchos equipos
       await connection.query(
         "UPDATE equipos SET tipo_cambio = ? WHERE vendido = 0", 
         [numericValue]
@@ -100,35 +115,5 @@ export const setTipoCambio = async (req, res) => {
   } catch (error) {
     console.error("Error al actualizar tipo de cambio:", error)
     res.status(500).json({ message: "Error al actualizar tipo de cambio", error: error.message })
-  }
-}
-
-// Nueva función para obtener el historial de tipos de cambio
-export const getHistorialTipoCambio = async (req, res) => {
-  try {
-    const { limit = 10, offset = 0 } = req.query
-    
-    const [rows] = await pool.query(
-      `SELECT tc.id, tc.valor, tc.fecha, tc.notas, u.nombre as usuario_nombre
-       FROM tipo_cambio tc
-       LEFT JOIN usuarios u ON tc.usuario_id = u.id
-       ORDER BY tc.fecha DESC
-       LIMIT ? OFFSET ?`,
-      [parseInt(limit), parseInt(offset)]
-    )
-    
-    const [total] = await pool.query("SELECT COUNT(*) as total FROM tipo_cambio")
-    
-    res.json({
-      data: rows,
-      pagination: {
-        total: total[0].total,
-        limit: parseInt(limit),
-        offset: parseInt(offset)
-      }
-    })
-  } catch (error) {
-    console.error("Error al obtener historial de tipo de cambio:", error)
-    res.status(500).json({ message: "Error al obtener historial de tipo de cambio" })
   }
 }
