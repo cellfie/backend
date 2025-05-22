@@ -224,7 +224,20 @@ export const createReparacion = async (req, res) => {
     await connection.beginTransaction()
 
     // Extraer los datos del cuerpo de la solicitud
-    const { cliente, equipo, reparaciones, pago, notas } = req.body
+    const { cliente, equipo, reparaciones, pago, notas, punto_venta_id } = req.body
+
+    // Verificar si se proporciona un punto de venta
+    if (!punto_venta_id) {
+      await connection.rollback()
+      return res.status(400).json({ message: "Se requiere seleccionar un punto de venta" })
+    }
+
+    // Verificar que el punto de venta existe
+    const [puntosVenta] = await connection.query("SELECT * FROM puntos_venta WHERE id = ?", [punto_venta_id])
+    if (puntosVenta.length === 0) {
+      await connection.rollback()
+      return res.status(404).json({ message: "Punto de venta no encontrado" })
+    }
 
     // Verificar si se proporciona un cliente
     if (!cliente) {
@@ -261,11 +274,8 @@ export const createReparacion = async (req, res) => {
       clienteId = resultCliente.insertId
     }
 
-    // Obtener el punto de venta (usar el valor por defecto si no se proporciona)
-    const puntoVentaId = req.body.punto_venta_id || 1
-
     // Generar un número de ticket único
-    const numeroTicket = await generarNumeroTicket(puntoVentaId)
+    const numeroTicket = await generarNumeroTicket(punto_venta_id)
 
     // Calcular el total de la reparación
     let totalReparacion = 0
@@ -287,7 +297,7 @@ export const createReparacion = async (req, res) => {
         punto_venta_id
       ) VALUES (?, ?, NOW(), 'pendiente', ?, ?, ?, ?)
     `,
-      [numeroTicket, clienteId, notas || null, totalReparacion, req.user.id, puntoVentaId],
+      [numeroTicket, clienteId, notas || null, totalReparacion, req.user.id, punto_venta_id],
     )
 
     const reparacionId = resultReparacion.insertId
