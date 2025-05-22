@@ -1,3 +1,5 @@
+import pool from "../db.js"
+
 export const getTipoCambio = async (req, res) => {
   const [rows] = await pool.query("SELECT valor FROM tipo_cambio ORDER BY fecha DESC LIMIT 1")
   res.json({ valor: rows[0]?.valor ?? 0 })
