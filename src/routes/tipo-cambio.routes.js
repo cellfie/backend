@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getTipoCambio, setTipoCambio, getHistorialTipoCambio } from '../controllers/tipoCambio.controller.js';
+import { getTipoCambio, setTipoCambio } from '../controllers/tipoCambio.controller.js';
 import { verifyToken } from '../middlewares/verifyToken.js';
 import { check } from 'express-validator';
 
@@ -18,6 +18,5 @@ const validateTipoCambio = [
 // Rutas
 router.get('/', getTipoCambio);
 router.put('/', validateTipoCambio, setTipoCambio);
-router.get('/historial', getHistorialTipoCambio);
 
 export default router;
