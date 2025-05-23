@@ -8,7 +8,8 @@ export const getRepuestos = async (req, res) => {
             SELECT 
                 r.id, 
                 r.nombre,
-                r.descripcion
+                r.descripcion,
+                r.precio
             FROM repuestos r
             ORDER BY r.fecha_creacion DESC
         `)
@@ -58,7 +59,8 @@ export const getRepuestoById = async (req, res) => {
             SELECT 
                 r.id, 
                 r.nombre,
-                r.descripcion
+                r.descripcion,
+                r.precio
             FROM repuestos r
             WHERE r.id = ?
         `,
@@ -110,7 +112,7 @@ export const createRepuesto = async (req, res) => {
     return res.status(400).json({ errors: errors.array() })
   }
 
-  const { nombre, descripcion, punto_venta_id, stock } = req.body
+  const { nombre, descripcion, precio, punto_venta_id, stock } = req.body
 
   // Validaciones manuales adicionales
   if (!nombre || nombre.trim() === "") {
@@ -125,15 +127,20 @@ export const createRepuesto = async (req, res) => {
     return res.status(400).json({ message: "El stock debe ser un número no negativo" })
   }
 
+  if (precio !== undefined && (isNaN(precio) || precio < 0)) {
+    return res.status(400).json({ message: "El precio debe ser un número no negativo" })
+  }
+
   const connection = await pool.getConnection()
 
   try {
     await connection.beginTransaction()
 
     // Insertar el repuesto (modelo simplificado)
-    const [result] = await connection.query("INSERT INTO repuestos (nombre, descripcion) VALUES (?, ?)", [
+    const [result] = await connection.query("INSERT INTO repuestos (nombre, descripcion, precio) VALUES (?, ?, ?)", [
       nombre,
       descripcion || null,
+      precio || 0,
     ])
 
     const repuestoId = result.insertId
@@ -179,11 +186,15 @@ export const updateRepuesto = async (req, res) => {
   }
 
   const { id } = req.params
-  const { nombre, descripcion, punto_venta_id, stock } = req.body
+  const { nombre, descripcion, precio, punto_venta_id, stock } = req.body
 
   // Validaciones manuales adicionales
   if (!nombre || nombre.trim() === "") {
     return res.status(400).json({ message: "El nombre es obligatorio" })
+  }
+
+  if (precio !== undefined && (isNaN(precio) || precio < 0)) {
+    return res.status(400).json({ message: "El precio debe ser un número no negativo" })
   }
 
   const connection = await pool.getConnection()
@@ -199,9 +210,10 @@ export const updateRepuesto = async (req, res) => {
     }
 
     // Actualizar el repuesto (modelo simplificado)
-    await connection.query("UPDATE repuestos SET nombre = ?, descripcion = ? WHERE id = ?", [
+    await connection.query("UPDATE repuestos SET nombre = ?, descripcion = ?, precio = ? WHERE id = ?", [
       nombre,
       descripcion || null,
+      precio || 0,
       id,
     ])
 
@@ -276,7 +288,8 @@ export const searchRepuestos = async (req, res) => {
             SELECT 
                 r.id, 
                 r.nombre,
-                r.descripcion
+                r.descripcion,
+                r.precio
             FROM repuestos r
             LEFT JOIN inventario_repuestos i ON r.id = i.repuesto_id
             WHERE 1=1
