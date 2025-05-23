@@ -9,9 +9,9 @@ import {
   searchRepuestos,
 } from "../controllers/repuestos/repuesto.controller.js"
 import {
-  actualizarInventario,
-  descontarRepuestos,
-  getHistorialInventario,
+  getInventarioRepuestos,
+  getInventarioByRepuesto,
+  updateInventarioRepuesto,
 } from "../controllers/repuestos/inventario-repuesto.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
@@ -21,22 +21,18 @@ const router = Router()
 router.use(verifyToken())
 
 // Validaciones actualizadas para el modelo simplificado (solo nombre es obligatorio)
-const validateRepuesto = [check("nombre").notEmpty().withMessage("El nombre es obligatorio")]
+const validateRepuesto = [
+  check("nombre")
+    .notEmpty()
+    .withMessage("El nombre es obligatorio"),
+  // Ya no validamos código ni marca porque los hemos eliminado del modelo
+]
 
 // Validaciones para actualizar inventario
 const validateInventario = [
   check("repuesto_id").isInt().withMessage("ID de repuesto inválido"),
   check("punto_venta_id").isInt().withMessage("ID de punto de venta inválido"),
-  check("cantidad").isInt({ min: 0 }).withMessage("La cantidad debe ser un número no negativo"),
-]
-
-// Validaciones para descontar repuestos
-const validateDescontarRepuestos = [
-  check("repuestos").isArray({ min: 1 }).withMessage("Debe proporcionar al menos un repuesto"),
-  check("repuestos.*.id").isInt().withMessage("ID de repuesto inválido"),
-  check("repuestos.*.punto_venta_id").isInt().withMessage("ID de punto de venta inválido"),
-  check("repuestos.*.cantidad").isInt({ min: 1 }).withMessage("La cantidad debe ser mayor a cero"),
-  check("reparacion_id").isInt().withMessage("ID de reparación inválido"),
+  check("stock").isInt({ min: 0 }).withMessage("El stock debe ser un número no negativo"),
 ]
 
 // Rutas para repuestos
@@ -48,8 +44,8 @@ router.put("/:id", validateRepuesto, updateRepuesto)
 router.delete("/:id", deleteRepuesto)
 
 // Rutas para inventario de repuestos
-router.post("/inventario", validateInventario, actualizarInventario)
-router.post("/descontar", validateDescontarRepuestos, descontarRepuestos)
-router.get("/historial", getHistorialInventario)
+router.get("/inventario", getInventarioRepuestos)
+router.get("/:id/inventario", getInventarioByRepuesto)
+router.post("/inventario", validateInventario, updateInventarioRepuesto)
 
 export default router
