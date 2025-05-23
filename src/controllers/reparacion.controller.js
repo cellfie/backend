@@ -15,8 +15,8 @@ const generarNumeroTicket = async (puntoVentaId) => {
 
   // Obtener el último número de ticket con este prefijo para este punto de venta
   const [ultimoTicket] = await pool.query(
-    "SELECT numero_ticket FROM reparaciones WHERE numero_ticket LIKE ? AND punto_venta_id = ? ORDER BY id DESC LIMIT 1",
-    [`${prefijo}%`, puntoVentaId],
+    "SELECT numero_ticket FROM reparaciones WHERE numero_ticket LIKE ? ORDER BY id DESC LIMIT 1",
+    [`${prefijo}%`],
   )
 
   let numero = 1
