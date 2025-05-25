@@ -395,7 +395,7 @@ export const createVentaEquipo = async (req, res) => {
                 ) VALUES (?, ?, ?, ?, NOW(), ?)`,
         [
           equipoCanjeId,
-          "ing_canje", // ← Cambiar de "ingreso_canje" a "ing_canje"
+          "ajuste",
           ventaId,
           usuario_id,
           `Equipo recibido por plan canje en venta #${numeroFactura}`,
@@ -553,7 +553,7 @@ export const anularVentaEquipo = async (req, res) => {
             ) VALUES (?, ?, ?, ?, NOW(), ?)`,
       [
         venta.equipo_id,
-        "anulacion", // ← Cambiar de "anulacion_venta" a "anulacion"
+        "anulacion_venta",
         id,
         usuario_id,
         `Anulación de venta de equipo #${venta.numero_factura}: ${motivo}`,
@@ -579,7 +579,7 @@ export const anularVentaEquipo = async (req, res) => {
                 ) VALUES (?, ?, ?, ?, NOW(), ?)`,
           [
             equipoCanjeId,
-            "elim_canje", // ← Cambiar de "eliminacion_canje" a "elim_canje"
+            "ajuste",
             id,
             usuario_id,
             `Eliminación de equipo de canje por anulación de venta #${venta.numero_factura}: ${motivo}`,
