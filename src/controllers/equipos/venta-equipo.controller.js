@@ -631,7 +631,7 @@ export const anularVentaEquipo = async (req, res) => {
     } else {
       // Anular los pagos asociados a esta venta
       const [pagos] = await connection.query(
-        "SELECT * FROM pagos WHERE referencia_id = ? AND tipo_referencia = 'venta_equipo' AND anulado = 0",
+        "SELECT * FROM pagos WHERE referencia_id = ? AND tipo_referencia = 'venta'",
         [id],
       )
 
