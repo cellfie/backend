@@ -481,7 +481,7 @@ export const createVentaEquipo = async (req, res) => {
         monto: totalARS,
         tipo_pago: tipo_pago,
         referencia_id: ventaId,
-        tipo_referencia: "venta_equipo",
+        tipo_referencia: "venta", // ← Usar "venta" en lugar de "venta_equipo"
         cliente_id: clienteId,
         usuario_id,
         punto_venta_id,
