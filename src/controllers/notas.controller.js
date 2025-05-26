@@ -13,18 +13,17 @@ SELECT
   n.texto, 
   n.completada, 
   n.fecha_creacion,
-  DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_creacion_formatted,
   n.fecha_completada,
-  DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_completada_formatted,
   n.punto_venta_id,
   pv.nombre AS punto_venta_nombre,
   u.nombre AS usuario_nombre
 FROM notas n
 LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
 LEFT JOIN usuarios u ON n.usuario_id = u.id
+WHERE n.usuario_id = ?
 `
 
-    const params = []
+    const params = [usuario_id]
 
     // Filtrar por completadas/pendientes si se especifica
     if (completadas !== undefined) {
@@ -68,9 +67,7 @@ export const createNota = async (req, res) => {
     n.texto, 
     n.completada, 
     n.fecha_creacion,
-    DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_creacion_formatted,
     n.fecha_completada,
-    DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_completada_formatted,
     n.punto_venta_id,
     pv.nombre AS punto_venta_nombre,
     u.nombre AS usuario_nombre
@@ -103,8 +100,8 @@ export const updateNota = async (req, res) => {
   const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
+    // Verificar que la nota exista y pertenezca al usuario
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
 
     if (notas.length === 0) {
       return res.status(404).json({ message: "Nota no encontrada" })
@@ -146,9 +143,7 @@ export const updateNota = async (req, res) => {
     n.texto, 
     n.completada, 
     n.fecha_creacion, 
-    DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_creacion_formatted,
     n.fecha_completada,
-    DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_completada_formatted,
     n.punto_venta_id,
     pv.nombre AS punto_venta_nombre,
     u.nombre AS usuario_nombre
@@ -175,8 +170,8 @@ export const deleteNota = async (req, res) => {
   const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
+    // Verificar que la nota exista y pertenezca al usuario
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
 
     if (notas.length === 0) {
       return res.status(404).json({ message: "Nota no encontrada" })
@@ -197,8 +192,8 @@ export const toggleNotaCompletada = async (req, res) => {
   const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
+    // Verificar que la nota exista y pertenezca al usuario
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
 
     if (notas.length === 0) {
       return res.status(404).json({ message: "Nota no encontrada" })
@@ -220,9 +215,7 @@ export const toggleNotaCompletada = async (req, res) => {
     n.texto, 
     n.completada, 
     n.fecha_creacion,
-    DATE_FORMAT(CONVERT_TZ(n.fecha_creacion, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_creacion_formatted,
     n.fecha_completada,
-    DATE_FORMAT(CONVERT_TZ(n.fecha_completada, '+00:00', '-03:00'), '%d/%m/%Y %H:%i') as fecha_completada_formatted,
     n.punto_venta_id,
     pv.nombre AS punto_venta_nombre,
     u.nombre AS usuario_nombre
