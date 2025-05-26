@@ -10,12 +10,12 @@ export const getPagos = async (req, res) => {
             SELECT 
                 p.id, 
                 p.monto, 
-                CONVERT_TZ(p.fecha, '+00:00', '-03:00') as fecha,
+                p.fecha,
                 p.tipo_referencia,
                 p.referencia_id,
                 p.notas,
                 p.anulado,
-                CONVERT_TZ(p.fecha_anulacion, '+00:00', '-03:00') as fecha_anulacion,
+                p.fecha_anulacion,
                 p.motivo_anulacion,
                 c.id AS cliente_id,
                 c.nombre AS cliente_nombre,
@@ -36,13 +36,13 @@ export const getPagos = async (req, res) => {
 
     // Filtrar por fecha de inicio
     if (fecha_inicio) {
-      sql += ` AND DATE(CONVERT_TZ(p.fecha, '+00:00', '-03:00')) >= ?`
+      sql += ` AND DATE(p.fecha) >= ?`
       params.push(fecha_inicio)
     }
 
     // Filtrar por fecha de fin
     if (fecha_fin) {
-      sql += ` AND DATE(CONVERT_TZ(p.fecha, '+00:00', '-03:00')) <= ?`
+      sql += ` AND DATE(p.fecha) <= ?`
       params.push(fecha_fin)
     }
 
@@ -92,12 +92,12 @@ export const getPagoById = async (req, res) => {
             SELECT 
                 p.id, 
                 p.monto, 
-                CONVERT_TZ(p.fecha, '+00:00', '-03:00') as fecha,
+                p.fecha,
                 p.tipo_referencia,
                 p.referencia_id,
                 p.notas,
                 p.anulado,
-                CONVERT_TZ(p.fecha_anulacion, '+00:00', '-03:00') as fecha_anulacion,
+                p.fecha_anulacion,
                 p.motivo_anulacion,
                 c.id AS cliente_id,
                 c.nombre AS cliente_nombre,
@@ -171,17 +171,17 @@ export const registrarPagoInterno = async (
 
     // Actualizar saldo de la cuenta corriente (restar el monto del pago)
     const nuevoSaldo = saldoActual - montoNumerico
-    await connection.query("UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = CONVERT_TZ(NOW(), '+00:00', '-03:00') WHERE id = ?", [
+    await connection.query("UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = NOW() WHERE id = ?", [
       nuevoSaldo,
       cuentaCorriente.id,
     ])
 
-    // Registrar movimiento en la cuenta corriente con información detallada y zona horaria local
+    // Registrar movimiento en la cuenta corriente con información detallada SIN conversión de zona horaria
     await connection.query(
       `INSERT INTO movimientos_cuenta_corriente (
               cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
               tipo_referencia, usuario_id, notas, fecha
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), '+00:00', '-03:00'))`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         cuentaCorriente.id,
         "pago",
@@ -196,12 +196,12 @@ export const registrarPagoInterno = async (
     )
   }
 
-  // Insertar el pago con el campo tipo_pago como string y zona horaria local
+  // Insertar el pago con el campo tipo_pago como string SIN conversión de zona horaria
   const [resultPago] = await connection.query(
     `INSERT INTO pagos (
             monto, tipo_pago, referencia_id, tipo_referencia, 
             cliente_id, usuario_id, punto_venta_id, notas, fecha
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), '+00:00', '-03:00'))`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [monto, tipo_pago, referencia_id, tipo_referencia, cliente_id, usuario_id, punto_venta_id, notas],
   )
 
@@ -301,16 +301,16 @@ export const anularPago = async (req, res) => {
         // Actualizar saldo de la cuenta corriente (sumar el monto del pago anulado)
         const nuevoSaldo = cuentaCorriente.saldo + pago.monto
         await connection.query(
-          "UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = CONVERT_TZ(NOW(), '+00:00', '-03:00') WHERE id = ?",
+          "UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = NOW() WHERE id = ?",
           [nuevoSaldo, cuentaCorriente.id],
         )
 
-        // Registrar movimiento de reversión con zona horaria local
+        // Registrar movimiento de reversión SIN conversión de zona horaria
         await connection.query(
           `INSERT INTO movimientos_cuenta_corriente (
                         cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
                         referencia_id, tipo_referencia, usuario_id, notas, fecha
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), '+00:00', '-03:00'))`,
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             cuentaCorriente.id,
             "cargo",
@@ -326,8 +326,8 @@ export const anularPago = async (req, res) => {
       }
     }
 
-    // Anular el pago con zona horaria local
-    await connection.query("UPDATE pagos SET anulado = 1, fecha_anulacion = CONVERT_TZ(NOW(), '+00:00', '-03:00'), motivo_anulacion = ? WHERE id = ?", [
+    // Anular el pago SIN conversión de zona horaria
+    await connection.query("UPDATE pagos SET anulado = 1, fecha_anulacion = NOW(), motivo_anulacion = ? WHERE id = ?", [
       motivo,
       id,
     ])
