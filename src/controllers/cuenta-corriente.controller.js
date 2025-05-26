@@ -61,26 +61,6 @@ export const getCuentaCorrienteByCliente = async (req, res) => {
 
     // Si el cliente no tiene cuenta corriente, crear una respuesta con valores predeterminados
     if (cuentas.length === 0) {
-      // Opción 1: Crear una cuenta corriente automáticamente
-      // const [resultCuenta] = await pool.query(
-      //     'INSERT INTO cuentas_corrientes (cliente_id, limite_credito, activo) VALUES (?, ?, ?)',
-      //     [cliente_id, 0, 1]
-      // );
-
-      // const [nuevaCuenta] = await pool.query(
-      //     'SELECT * FROM cuentas_corrientes WHERE id = ?',
-      //     [resultCuenta.insertId]
-      // );
-
-      // return res.json({
-      //     ...nuevaCuenta[0],
-      //     cliente_nombre: clientes[0].nombre,
-      //     cliente_telefono: clientes[0].telefono,
-      //     cliente_documento: clientes[0].documento,
-      //     movimientos: []
-      // });
-
-      // Opción 2: Devolver un 404 con un mensaje claro
       return res.status(404).json({
         message: "El cliente no tiene cuenta corriente",
         cliente_id: cliente_id,
@@ -88,7 +68,7 @@ export const getCuentaCorrienteByCliente = async (req, res) => {
       })
     }
 
-    // Obtener los últimos movimientos
+    // Obtener los últimos movimientos con zona horaria local
     const [movimientos] = await pool.query(
       `
             SELECT 
@@ -99,7 +79,7 @@ export const getCuentaCorrienteByCliente = async (req, res) => {
                 m.saldo_nuevo,
                 m.referencia_id,
                 m.tipo_referencia,
-                m.fecha,
+                CONVERT_TZ(m.fecha, '+00:00', '-03:00') as fecha,
                 m.notas,
                 u.nombre AS usuario_nombre
             FROM movimientos_cuenta_corriente m
@@ -232,7 +212,7 @@ export const registrarPago = async (req, res) => {
     // Calcular nuevo saldo
     const nuevoSaldo = saldoActual - montoNumerico
 
-    // Registrar el pago
+    // Registrar el pago con zona horaria local
     const [resultPago] = await connection.query(
       `
       INSERT INTO pagos (
@@ -245,7 +225,7 @@ export const registrarPago = async (req, res) => {
         usuario_id, 
         punto_venta_id, 
         notas
-      ) VALUES (?, NOW(), ?, 'cuenta_corriente', ?, ?, ?, ?, ?)
+      ) VALUES (?, CONVERT_TZ(NOW(), '+00:00', '-03:00'), ?, 'cuenta_corriente', ?, ?, ?, ?, ?)
     `,
       [
         montoNumerico,
@@ -262,13 +242,13 @@ export const registrarPago = async (req, res) => {
     await connection.query(
       `
       UPDATE cuentas_corrientes 
-      SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+      SET saldo = ?, fecha_ultimo_movimiento = CONVERT_TZ(NOW(), '+00:00', '-03:00') 
       WHERE id = ?
     `,
       [nuevoSaldo, cuentaCorriente.id],
     )
 
-    // Registrar movimiento en la cuenta corriente
+    // Registrar movimiento en la cuenta corriente con zona horaria local
     const [resultMovimiento] = await connection.query(
       `
       INSERT INTO movimientos_cuenta_corriente (
@@ -281,9 +261,8 @@ export const registrarPago = async (req, res) => {
         tipo_referencia, 
         fecha, 
         usuario_id, 
-        notas,
-        tipo_pago
-      ) VALUES (?, 'pago', ?, ?, ?, ?, 'cuenta_corriente', NOW(), ?, ?, ?)
+        notas
+      ) VALUES (?, 'pago', ?, ?, ?, ?, 'otro', CONVERT_TZ(NOW(), '+00:00', '-03:00'), ?, ?)
     `,
       [
         cuentaCorriente.id,
@@ -293,16 +272,15 @@ export const registrarPago = async (req, res) => {
         resultPago.insertId,
         usuario_id,
         notas || `Pago en cuenta corriente`,
-        tipo_pago || "Efectivo",
       ],
     )
 
     await connection.commit()
 
-    // Obtener el movimiento creado
+    // Obtener el movimiento creado con zona horaria local
     const [movimiento] = await connection.query(
       `
-      SELECT m.*, DATE_FORMAT(m.fecha, '%Y-%m-%d %H:%i:%s') as fecha_formateada
+      SELECT m.*, CONVERT_TZ(m.fecha, '+00:00', '-03:00') as fecha_formateada
       FROM movimientos_cuenta_corriente m
       WHERE m.id = ?
     `,
@@ -344,7 +322,7 @@ export const getMovimientosCuentaCorriente = async (req, res) => {
                 m.saldo_nuevo,
                 m.referencia_id,
                 m.tipo_referencia,
-                m.fecha,
+                CONVERT_TZ(m.fecha, '+00:00', '-03:00') as fecha,
                 m.notas,
                 u.nombre AS usuario_nombre
             FROM movimientos_cuenta_corriente m
@@ -356,13 +334,13 @@ export const getMovimientosCuentaCorriente = async (req, res) => {
 
     // Filtrar por fecha de inicio
     if (fecha_inicio) {
-      sql += " AND DATE(m.fecha) >= ?"
+      sql += " AND DATE(CONVERT_TZ(m.fecha, '+00:00', '-03:00')) >= ?"
       params.push(fecha_inicio)
     }
 
     // Filtrar por fecha de fin
     if (fecha_fin) {
-      sql += " AND DATE(m.fecha) <= ?"
+      sql += " AND DATE(CONVERT_TZ(m.fecha, '+00:00', '-03:00')) <= ?"
       params.push(fecha_fin)
     }
 
