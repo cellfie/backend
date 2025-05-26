@@ -177,6 +177,7 @@ export const registrarPagoInterno = async (
     ])
 
     // Registrar movimiento en la cuenta corriente con información detallada
+    // CAMBIO: Usar 'otro' en lugar de 'pago_manual' para cumplir con el ENUM
     await connection.query(
       `INSERT INTO movimientos_cuenta_corriente (
               cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
@@ -188,7 +189,7 @@ export const registrarPagoInterno = async (
         montoNumerico,
         saldoActual,
         nuevoSaldo,
-        "pago_manual",
+        "otro", // ← CAMBIO: Usar 'otro' en lugar de 'pago_manual'
         usuario_id,
         notas ||
         `Pago en cuenta corriente. Saldo anterior: ${saldoActual.toFixed(2)}, Nuevo saldo: ${nuevoSaldo.toFixed(2)}`,
@@ -306,6 +307,7 @@ export const anularPago = async (req, res) => {
         )
 
         // Registrar movimiento de reversión
+        // CAMBIO: Usar 'ajuste' en lugar de 'anulacion_pago'
         await connection.query(
           `INSERT INTO movimientos_cuenta_corriente (
                         cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
@@ -318,7 +320,7 @@ export const anularPago = async (req, res) => {
             cuentaCorriente.saldo,
             nuevoSaldo,
             id,
-            "anulacion_pago",
+            "ajuste", // ← CAMBIO: Usar 'ajuste' en lugar de 'anulacion_pago'
             usuario_id,
             "Anulación de pago: " + motivo,
           ],
