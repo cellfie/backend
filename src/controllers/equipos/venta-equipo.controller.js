@@ -236,6 +236,9 @@ export const createVentaEquipo = async (req, res) => {
   try {
     await connection.beginTransaction()
 
+    // Al inicio de la función createVentaEquipo, después de obtener la conexión:
+    const fechaActual = new Date().toISOString().slice(0, 19).replace('T', ' ')
+
     // Verificar que el punto de venta existe
     const [puntosVenta] = await connection.query("SELECT * FROM puntos_venta WHERE id = ?", [punto_venta_id])
     if (puntosVenta.length === 0) {
@@ -392,12 +395,13 @@ export const createVentaEquipo = async (req, res) => {
       await connection.query(
         `INSERT INTO log_equipos (
                     equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
-                ) VALUES (?, ?, ?, ?, NOW(), ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?)`,
         [
           equipoCanjeId,
           "ajuste",
           ventaId,
           usuario_id,
+          fechaActual,
           `Equipo recibido por plan canje en venta #${numeroFactura}`,
         ],
       )
@@ -407,8 +411,8 @@ export const createVentaEquipo = async (req, res) => {
     await connection.query(
       `INSERT INTO log_equipos (
                 equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
-            ) VALUES (?, ?, ?, ?, NOW(), ?)`,
-      [equipo_id, "venta", ventaId, usuario_id, notas || `Venta de equipo #${numeroFactura}`],
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [equipo_id, "venta", ventaId, usuario_id, fechaActual, notas || `Venta de equipo #${numeroFactura}`],
     )
 
     // Si el tipo de pago es cuenta corriente, registrar el movimiento
@@ -452,8 +456,8 @@ export const createVentaEquipo = async (req, res) => {
 
         // Actualizar saldo
         await connection.query(
-          "UPDATE cuentas_corrientes SET saldo = saldo + ?, fecha_ultimo_movimiento = NOW() WHERE id = ?",
-          [totalARS, cuentaCorrienteId],
+          "UPDATE cuentas_corrientes SET saldo = saldo + ?, fecha_ultimo_movimiento = ? WHERE id = ?",
+          [totalARS, fechaActual, cuentaCorrienteId],
         )
       }
 
@@ -528,6 +532,9 @@ export const anularVentaEquipo = async (req, res) => {
   try {
     await connection.beginTransaction()
 
+    // Al inicio de la función anularVentaEquipo:
+    const fechaActual = new Date().toISOString().slice(0, 19).replace('T', ' ')
+
     // Verificar que la venta existe y no está anulada
     const [ventas] = await connection.query("SELECT * FROM ventas_equipos WHERE id = ?", [id])
 
@@ -550,12 +557,13 @@ export const anularVentaEquipo = async (req, res) => {
     await connection.query(
       `INSERT INTO log_equipos (
                 equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
-            ) VALUES (?, ?, ?, ?, NOW(), ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
       [
         venta.equipo_id,
         "anulacion_venta",
         id,
         usuario_id,
+        fechaActual,
         `Anulación de venta de equipo #${venta.numero_factura}: ${motivo}`,
       ],
     )
@@ -576,12 +584,13 @@ export const anularVentaEquipo = async (req, res) => {
         await connection.query(
           `INSERT INTO log_equipos (
                     equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
-                ) VALUES (?, ?, ?, ?, NOW(), ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?)`,
           [
             equipoCanjeId,
             "ajuste",
             id,
             usuario_id,
+            fechaActual,
             `Eliminación de equipo de canje por anulación de venta #${venta.numero_factura}: ${motivo}`,
           ],
         )
@@ -605,8 +614,8 @@ export const anularVentaEquipo = async (req, res) => {
 
         // Actualizar saldo de la cuenta corriente
         await connection.query(
-          "UPDATE cuentas_corrientes SET saldo = saldo - ?, fecha_ultimo_movimiento = NOW() WHERE id = ?",
-          [venta.total_ars, cuentaCorriente.id],
+          "UPDATE cuentas_corrientes SET saldo = saldo - ?, fecha_ultimo_movimiento = ? WHERE id = ?",
+          [venta.total_ars, fechaActual, cuentaCorriente.id],
         )
 
         // Registrar movimiento de reversión
@@ -637,16 +646,16 @@ export const anularVentaEquipo = async (req, res) => {
 
       for (const pago of pagos) {
         await connection.query(
-          "UPDATE pagos SET anulado = 1, fecha_anulacion = NOW(), motivo_anulacion = ? WHERE id = ?",
-          [`Anulación de venta de equipo: ${motivo}`, pago.id],
+          "UPDATE pagos SET anulado = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?",
+          [fechaActual, `Anulación de venta de equipo: ${motivo}`, pago.id],
         )
       }
     }
 
     // Anular la venta
     await connection.query(
-      "UPDATE ventas_equipos SET anulada = 1, fecha_anulacion = NOW(), motivo_anulacion = ? WHERE id = ?",
-      [motivo, id],
+      "UPDATE ventas_equipos SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?",
+      [fechaActual, motivo, id],
     )
 
     await connection.commit()
