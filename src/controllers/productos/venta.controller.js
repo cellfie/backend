@@ -612,7 +612,7 @@ export const anularVenta = async (req, res) => {
               [nuevoSaldo, cuenta.id],
             )
 
-            // Registrar el movimiento en la cuenta corriente
+            // Registrar el movimiento en la cuenta corriente - CAMBIO: usar 'ajuste' en lugar de 'anulacion_venta'
             await connection.query(
               `
               INSERT INTO movimientos_cuenta_corriente (
@@ -626,7 +626,7 @@ export const anularVenta = async (req, res) => {
                 fecha, 
                 usuario_id, 
                 notas
-              ) VALUES (?, ?, ?, ?, ?, ?, 'anulacion_venta', NOW(), ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
             `,
               [
                 cuenta.id,
@@ -635,6 +635,7 @@ export const anularVenta = async (req, res) => {
                 saldoAnterior.toFixed(2),
                 nuevoSaldo.toFixed(2),
                 id,
+                "ajuste", // ← CAMBIO: usar 'ajuste' en lugar de 'anulacion_venta'
                 usuario_id,
                 `Anulación de venta #${venta.numero_factura} - Reversión de devolución: ${motivo}`,
               ],
@@ -741,7 +742,7 @@ export const anularVenta = async (req, res) => {
           [venta.total, cuentaCorriente.id],
         )
 
-        // Registrar movimiento de reversión
+        // Registrar movimiento de reversión - CAMBIO: usar 'ajuste' en lugar de 'anulacion_venta'
         await connection.query(
           `INSERT INTO movimientos_cuenta_corriente (
                         cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
@@ -754,7 +755,7 @@ export const anularVenta = async (req, res) => {
             cuentaCorriente.saldo,
             cuentaCorriente.saldo - venta.total,
             id,
-            "anulacion_venta",
+            "ajuste", // ← CAMBIO: usar 'ajuste' en lugar de 'anulacion_venta'
             usuario_id,
             "Anulación de venta: " + motivo,
           ],
