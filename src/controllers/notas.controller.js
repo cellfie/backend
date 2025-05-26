@@ -5,7 +5,6 @@ import { validationResult } from "express-validator"
 export const getNotas = async (req, res) => {
   try {
     const { completadas } = req.query
-    const usuario_id = req.usuario.id
 
     let sql = `
 SELECT 
@@ -20,10 +19,10 @@ SELECT
 FROM notas n
 LEFT JOIN puntos_venta pv ON n.punto_venta_id = pv.id
 LEFT JOIN usuarios u ON n.usuario_id = u.id
-WHERE n.usuario_id = ?
+WHERE 1=1
 `
 
-    const params = [usuario_id]
+    const params = []
 
     // Filtrar por completadas/pendientes si se especifica
     if (completadas !== undefined) {
@@ -97,11 +96,10 @@ export const updateNota = async (req, res) => {
 
   const { id } = req.params
   const { texto, completada } = req.body
-  const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista y pertenezca al usuario
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
+    // Verificar que la nota exista (sin filtro por usuario)
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
 
     if (notas.length === 0) {
       return res.status(404).json({ message: "Nota no encontrada" })
@@ -167,11 +165,10 @@ export const updateNota = async (req, res) => {
 // Eliminar una nota
 export const deleteNota = async (req, res) => {
   const { id } = req.params
-  const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista y pertenezca al usuario
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
+    // Verificar que la nota exista (sin filtro por usuario)
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
 
     if (notas.length === 0) {
       return res.status(404).json({ message: "Nota no encontrada" })
@@ -189,11 +186,10 @@ export const deleteNota = async (req, res) => {
 // Marcar una nota como completada o pendiente
 export const toggleNotaCompletada = async (req, res) => {
   const { id } = req.params
-  const usuario_id = req.usuario.id
 
   try {
-    // Verificar que la nota exista y pertenezca al usuario
-    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ? AND usuario_id = ?", [id, usuario_id])
+    // Verificar que la nota exista (sin filtro por usuario)
+    const [notas] = await pool.query("SELECT * FROM notas WHERE id = ?", [id])
 
     if (notas.length === 0) {
       return res.status(404).json({ message: "Nota no encontrada" })
