@@ -48,7 +48,7 @@ export const getPerdidas = async (req, res) => {
         p.punto_venta_id,
         NULL AS producto_codigo,
         NULL AS producto_nombre,
-        r.codigo AS repuesto_codigo, 
+        CONCAT('REP-', LPAD(r.id, 4, '0')) AS repuesto_codigo,
         r.nombre AS repuesto_nombre,
         u.nombre AS usuario_nombre,
         pv.nombre AS punto_venta_nombre
@@ -153,7 +153,7 @@ export const getPerdidaById = async (req, res) => {
           'repuesto' as tipo,
           NULL AS producto_codigo,
           NULL AS producto_nombre,
-          r.codigo AS repuesto_codigo, 
+          CONCAT('REP-', LPAD(r.id, 4, '0')) AS repuesto_codigo,
           r.nombre AS repuesto_nombre,
           u.nombre AS usuario_nombre,
           pv.nombre AS punto_venta_nombre
@@ -374,7 +374,7 @@ export const createPerdida = async (req, res) => {
           'repuesto' as tipo,
           NULL AS producto_codigo,
           NULL AS producto_nombre,
-          r.codigo AS repuesto_codigo, 
+          CONCAT('REP-', LPAD(r.id, 4, '0')) AS repuesto_codigo,
           r.nombre AS repuesto_nombre,
           u.nombre AS usuario_nombre,
           pv.nombre AS punto_venta_nombre
