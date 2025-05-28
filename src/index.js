@@ -2,8 +2,6 @@ import app from './app.js';
 import { PORT } from './config.js';
 import './db.js';
 
-// Configurar zona horaria del servidor
-process.env.TZ = 'America/Argentina/Buenos_Aires';
 
 async function main() {
 

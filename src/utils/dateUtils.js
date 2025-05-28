@@ -1,44 +1,40 @@
-// Función para obtener la fecha actual en zona horaria de Argentina
-export const getFechaArgentina = () => {
-  // Create a date object with the current UTC time
-  const fecha = new Date();
-  
-  // Format the date in Argentina timezone
-  const options = { timeZone: "America/Argentina/Buenos_Aires" };
-  const argentinaTimeStr = fecha.toLocaleString("en-US", options);
-  
-  // Create a new Date object from the formatted string
-  return new Date(argentinaTimeStr);
-};
-
-// Función para formatear fecha para la base de datos (MySQL DATETIME)
+// Función mejorada para formatear fecha para la base de datos
 export const formatearFechaParaDB = (fecha = null) => {
-  // If no date is provided, get the current date in Argentina's timezone
+  let fechaAUsar;
+  
   if (!fecha) {
-    // Get current date in UTC
-    const now = new Date();
-    
-    // Convert to Argentina timezone
-    const argentinaTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Argentina/Buenos_Aires" }));
-    
-    // Format as YYYY-MM-DD HH:MM:SS
-    return argentinaTime.getFullYear() + '-' +
-      String(argentinaTime.getMonth() + 1).padStart(2, '0') + '-' +
-      String(argentinaTime.getDate()).padStart(2, '0') + ' ' +
-      String(argentinaTime.getHours()).padStart(2, '0') + ':' +
-      String(argentinaTime.getMinutes()).padStart(2, '0') + ':' +
-      String(argentinaTime.getSeconds()).padStart(2, '0');
+    // Obtener fecha actual en timezone de Argentina
+    fechaAUsar = new Date();
+  } else {
+    fechaAUsar = new Date(fecha);
   }
   
-  // If a date is provided, format it
-  return fecha.toISOString().slice(0, 19).replace('T', ' ');
+  // Siempre formatear en timezone de Argentina
+  const argentinaTime = new Date(fechaAUsar.toLocaleString("en-US", { 
+    timeZone: "America/Argentina/Buenos_Aires" 
+  }));
+  
+  return argentinaTime.getFullYear() + '-' +
+    String(argentinaTime.getMonth() + 1).padStart(2, '0') + '-' +
+    String(argentinaTime.getDate()).padStart(2, '0') + ' ' +
+    String(argentinaTime.getHours()).padStart(2, '0') + ':' +
+    String(argentinaTime.getMinutes()).padStart(2, '0') + ':' +
+    String(argentinaTime.getSeconds()).padStart(2, '0');
 };
 
-// Función para formatear fecha para mostrar al usuario
+// Función mejorada para mostrar fechas
 export const formatearFechaParaMostrar = (fechaString) => {
   if (!fechaString) return "";
   
-  const fecha = new Date(fechaString);
+  // Si la fecha viene sin timezone, asumimos que está en Argentina
+  let fecha;
+  if (fechaString.includes('T') || fechaString.includes('+')) {
+    // Ya tiene información de timezone
+    fecha = new Date(fechaString);
+  } else {
+    // Fecha sin timezone, la tratamos como Argentina
+    fecha = new Date(fechaString + ' GMT-0300');
+  }
   
   return fecha.toLocaleString("es-AR", {
     timeZone: "America/Argentina/Buenos_Aires",
