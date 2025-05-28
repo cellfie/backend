@@ -53,11 +53,11 @@ export const createNota = async (req, res) => {
   const usuario_id = req.usuario.id
 
   try {
-    const [result] = await pool.query("INSERT INTO notas (texto, usuario_id, punto_venta_id) VALUES (?, ?, ?)", [
-      texto,
-      usuario_id,
-      punto_venta_id || null,
-    ])
+    // Usar NOW() para guardar la fecha en zona horaria del servidor (configurada como Argentina)
+    const [result] = await pool.query(
+      "INSERT INTO notas (texto, usuario_id, punto_venta_id, fecha_creacion) VALUES (?, ?, ?, NOW())", 
+      [texto, usuario_id, punto_venta_id || null]
+    )
 
     // Obtener la nota recién creada
     const [notas] = await pool.query(
