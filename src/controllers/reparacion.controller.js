@@ -1,5 +1,6 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
+import { formatearFechaParaDB } from "../utils/dateUtils.js" // ← AGREGAR ESTA IMPORTACIÓN
 
 // Importar la función para registrar acciones en el historial
 import { registrarAccion } from "./historial-acciones.controller.js"
@@ -283,7 +284,7 @@ export const createReparacion = async (req, res) => {
       totalReparacion += Number.parseFloat(item.precio) || 0
     }
 
-    // Insertar la reparación
+    // Insertar la reparación - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
     const [resultReparacion] = await connection.query(
       `
       INSERT INTO reparaciones (
@@ -295,9 +296,9 @@ export const createReparacion = async (req, res) => {
         total, 
         usuario_id, 
         punto_venta_id
-      ) VALUES (?, ?, NOW(), 'pendiente', ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, 'pendiente', ?, ?, ?, ?)
     `,
-      [numeroTicket, clienteId, notas || null, totalReparacion, req.user.id, punto_venta_id],
+      [numeroTicket, clienteId, formatearFechaParaDB(), notas || null, totalReparacion, req.user.id, punto_venta_id],
     )
 
     const reparacionId = resultReparacion.insertId
@@ -388,19 +389,20 @@ export const createReparacion = async (req, res) => {
             })
           }
 
-          // Actualizar saldo
-          await connection.query(
-            "UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = NOW() WHERE id = ?",
-            [nuevoSaldo, cuentaCorrienteId],
-          )
+          // Actualizar saldo - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
+          await connection.query("UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?", [
+            nuevoSaldo,
+            formatearFechaParaDB(),
+            cuentaCorrienteId,
+          ])
         }
 
-        // Registrar movimiento en cuenta corriente
+        // Registrar movimiento en cuenta corriente - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
         const [resultMovimiento] = await connection.query(
           `INSERT INTO movimientos_cuenta_corriente (
             cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
             referencia_id, tipo_referencia, fecha, usuario_id, notas
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             cuentaCorrienteId,
             "cargo",
@@ -409,17 +411,18 @@ export const createReparacion = async (req, res) => {
             nuevoSaldo,
             reparacionId,
             "reparacion",
+            formatearFechaParaDB(),
             req.user.id,
             `Cargo por reparación #${numeroTicket}`,
           ],
         )
 
-        // Registrar pago de reparación
+        // Registrar pago de reparación - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
         const [resultPago] = await connection.query(
           `INSERT INTO pagos_reparacion (
             reparacion_id, monto, metodo_pago, fecha_pago, usuario_id, referencia_cuenta_corriente
-          ) VALUES (?, ?, ?, NOW(), ?, ?)`,
-          [reparacionId, montoPago, pago.metodo, req.user.id, resultMovimiento.insertId],
+          ) VALUES (?, ?, ?, ?, ?, ?)`,
+          [reparacionId, montoPago, pago.metodo, formatearFechaParaDB(), req.user.id, resultMovimiento.insertId],
         )
 
         // Registrar la acción de pago en el historial
@@ -431,12 +434,12 @@ export const createReparacion = async (req, res) => {
           connection,
         )
       } else {
-        // Registrar pago normal
+        // Registrar pago normal - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
         const [resultPago] = await connection.query(
           `INSERT INTO pagos_reparacion (
             reparacion_id, monto, metodo_pago, fecha_pago, usuario_id
-          ) VALUES (?, ?, ?, NOW(), ?)`,
-          [reparacionId, montoPago, pago.metodo, req.user.id],
+          ) VALUES (?, ?, ?, ?, ?)`,
+          [reparacionId, montoPago, pago.metodo, formatearFechaParaDB(), req.user.id],
         )
 
         // Registrar la acción de pago en el historial
@@ -709,9 +712,10 @@ export const updateEstadoReparacion = async (req, res) => {
       queryParams.push(notas)
     }
 
-    // Si se está marcando como entregada, actualizar la fecha de entrega
+    // Si se está marcando como entregada, actualizar la fecha de entrega - CAMBIO: usar formatearFechaParaDB()
     if (estado === "entregada") {
-      query += ", fecha_entrega = NOW()"
+      query += ", fecha_entrega = ?"
+      queryParams.push(formatearFechaParaDB())
     }
 
     query += " WHERE id = ?"
@@ -719,15 +723,15 @@ export const updateEstadoReparacion = async (req, res) => {
 
     await connection.query(query, queryParams)
 
-    // Si se está marcando como terminada, marcar todos los detalles como completados
+    // Si se está marcando como terminada, marcar todos los detalles como completados - CAMBIO: usar formatearFechaParaDB()
     if (estado === "terminada") {
       await connection.query(
         `
         UPDATE detalles_reparacion 
-        SET completado = 1, fecha_completado = NOW() 
+        SET completado = 1, fecha_completado = ? 
         WHERE reparacion_id = ? AND completado = 0
       `,
-        [id],
+        [formatearFechaParaDB(), id],
       )
     }
 
@@ -806,18 +810,18 @@ export const cancelarReparacion = async (req, res) => {
           const saldoActual = Number.parseFloat(cuenta.saldo)
           const montoPago = Number.parseFloat(pago.monto)
 
-          // Actualizar el saldo de la cuenta corriente (restar el monto del pago)
+          // Actualizar el saldo de la cuenta corriente (restar el monto del pago) - CAMBIO: usar formatearFechaParaDB()
           const nuevoSaldo = saldoActual - montoPago
           await connection.query(
             `
             UPDATE cuentas_corrientes 
-            SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+            SET saldo = ?, fecha_ultimo_movimiento = ? 
             WHERE id = ?
           `,
-            [nuevoSaldo, cuenta.id],
+            [nuevoSaldo, formatearFechaParaDB(), cuenta.id],
           )
 
-          // Registrar el movimiento de reversión en la cuenta corriente
+          // Registrar el movimiento de reversión en la cuenta corriente - CAMBIO: usar formatearFechaParaDB()
           await connection.query(
             `
             INSERT INTO movimientos_cuenta_corriente (
@@ -831,7 +835,7 @@ export const cancelarReparacion = async (req, res) => {
               fecha, 
               usuario_id, 
               notas
-            ) VALUES (?, 'pago', ?, ?, ?, ?, 'anulacion_reparacion', NOW(), ?, ?)
+            ) VALUES (?, 'pago', ?, ?, ?, ?, 'anulacion_reparacion', ?, ?, ?)
           `,
             [
               cuenta.id,
@@ -839,6 +843,7 @@ export const cancelarReparacion = async (req, res) => {
               saldoActual,
               nuevoSaldo,
               id,
+              formatearFechaParaDB(),
               req.user.id,
               `Reversión de cargo por cancelación de reparación #${reparaciones[0].numero_ticket}`,
             ],
@@ -959,17 +964,18 @@ export const registrarPagoReparacion = async (req, res) => {
           })
         }
 
+        // CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
         await connection.query(
           `
           UPDATE cuentas_corrientes 
-          SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+          SET saldo = ?, fecha_ultimo_movimiento = ? 
           WHERE id = ?
         `,
-          [nuevoSaldo, cuentaCorrienteId],
+          [nuevoSaldo, formatearFechaParaDB(), cuentaCorrienteId],
         )
       }
 
-      // Registrar el movimiento en la cuenta corriente
+      // Registrar el movimiento en la cuenta corriente - CAMBIO: usar formatearFechaParaDB()
       const [resultMovimiento] = await connection.query(
         `
         INSERT INTO movimientos_cuenta_corriente (
@@ -983,7 +989,7 @@ export const registrarPagoReparacion = async (req, res) => {
           fecha, 
           usuario_id, 
           notas
-        ) VALUES (?, 'cargo', ?, ?, ?, ?, 'reparacion', NOW(), ?, ?)
+        ) VALUES (?, 'cargo', ?, ?, ?, ?, 'reparacion', ?, ?, ?)
       `,
         [
           cuentaCorrienteId,
@@ -991,6 +997,7 @@ export const registrarPagoReparacion = async (req, res) => {
           saldoAnterior,
           nuevoSaldo,
           id,
+          formatearFechaParaDB(),
           req.user.id,
           `Cargo por reparación #${reparacion.numero_ticket} - ${reparacion.cliente_nombre}`,
         ],
@@ -999,7 +1006,7 @@ export const registrarPagoReparacion = async (req, res) => {
       referenciaCuentaCorriente = resultMovimiento.insertId
     }
 
-    // Registrar el pago
+    // Registrar el pago - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
     const [resultPago] = await connection.query(
       `
       INSERT INTO pagos_reparacion (
@@ -1009,9 +1016,9 @@ export const registrarPagoReparacion = async (req, res) => {
         fecha_pago, 
         usuario_id, 
         referencia_cuenta_corriente
-      ) VALUES (?, ?, ?, NOW(), ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `,
-      [id, montoNumerico, metodo_pago, req.user.id, referenciaCuentaCorriente],
+      [id, montoNumerico, metodo_pago, formatearFechaParaDB(), req.user.id, referenciaCuentaCorriente],
     )
 
     // Registrar la acción de pago en el historial
