@@ -1,5 +1,6 @@
 // historial-acciones.controller.js
 import pool from "../db.js"
+import { formatearFechaParaDB } from "../utils/dateUtils.js"
 
 // Registrar una acción en el historial
 export const registrarAccion = async (reparacionId, tipoAccion, usuarioId, detalles = null, connection = null) => {
@@ -20,8 +21,8 @@ export const registrarAccion = async (reparacionId, tipoAccion, usuarioId, detal
         usuario_nombre,
         fecha, 
         detalles
-      ) VALUES (?, ?, ?, ?, NOW(), ?)`,
-      [reparacionId, tipoAccion, usuarioId, usuarioNombre, detalles],
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [reparacionId, tipoAccion, usuarioId, usuarioNombre, formatearFechaParaDB(), detalles],
     )
 
     return result.insertId
