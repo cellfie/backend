@@ -1,6 +1,7 @@
 import pool from "../../db.js"
 import { validationResult } from "express-validator"
 import { registrarPagoInterno } from "../pago.controller.js"
+import { formatearFechaParaDB } from "../../utils/dateUtils.js";
 
 // Generar número de factura único
 const generarNumeroFactura = async () => {
@@ -314,10 +315,10 @@ export const createVenta = async (req, res) => {
     // Insertar la venta
     const [resultVenta] = await connection.query(
       `INSERT INTO ventas (
-                numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago,
-                subtotal, porcentaje_interes, monto_interes, porcentaje_descuento, monto_descuento, total,
-                tiene_devoluciones
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago,
+    subtotal, porcentaje_interes, monto_interes, porcentaje_descuento, monto_descuento, total,
+    tiene_devoluciones, fecha
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         numeroFactura,
         clienteId,
@@ -325,12 +326,13 @@ export const createVenta = async (req, res) => {
         punto_venta_id,
         tipo_pago,
         subtotal,
-        porcentaje_interes, // Guardamos el porcentaje de interés para referencia
-        montoInteres, // Guardamos el monto de interés para referencia
+        porcentaje_interes,
+        montoInteres,
         porcentaje_descuento,
         montoDescuento,
-        total, // El total no incluye el interés
-        0, // tiene_devoluciones inicialmente en 0
+        total,
+        0,
+        formatearFechaParaDB() // Usar la función utilitaria
       ],
     )
 
