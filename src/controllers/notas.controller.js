@@ -1,5 +1,6 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
+import { formatearFechaParaDB } from "../utils/dateUtils.js"
 
 // Obtener todas las notas
 export const getNotas = async (req, res) => {
@@ -53,10 +54,12 @@ export const createNota = async (req, res) => {
   const usuario_id = req.usuario.id
 
   try {
-    // Usar NOW() para guardar la fecha en zona horaria del servidor (configurada como Argentina)
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    const fechaActual = formatearFechaParaDB()
+
     const [result] = await pool.query(
-      "INSERT INTO notas (texto, usuario_id, punto_venta_id, fecha_creacion) VALUES (?, ?, ?, NOW())", 
-      [texto, usuario_id, punto_venta_id || null]
+      "INSERT INTO notas (texto, usuario_id, punto_venta_id, fecha_creacion) VALUES (?, ?, ?, ?)",
+      [texto, usuario_id, punto_venta_id || null, fechaActual],
     )
 
     // Obtener la nota recién creada
@@ -119,7 +122,9 @@ export const updateNota = async (req, res) => {
 
       // Si se está marcando como completada, actualizar la fecha de completada
       if (completada) {
-        updateFields.push("fecha_completada = NOW()")
+        const fechaCompletada = formatearFechaParaDB()
+        updateFields.push("fecha_completada = ?")
+        updateParams.push(fechaCompletada)
       } else {
         updateFields.push("fecha_completada = NULL")
       }
@@ -197,10 +202,13 @@ export const toggleNotaCompletada = async (req, res) => {
 
     const nota = notas[0]
     const nuevoEstado = nota.completada === 0 ? 1 : 0
-    const fechaCompletada = nuevoEstado === 1 ? "NOW()" : "NULL"
 
-    await pool.query(`UPDATE notas SET completada = ?, fecha_completada = ${fechaCompletada} WHERE id = ?`, [
+    // Usar la función utilitaria para la fecha de completada
+    const fechaCompletada = nuevoEstado === 1 ? formatearFechaParaDB() : null
+
+    await pool.query(`UPDATE notas SET completada = ?, fecha_completada = ? WHERE id = ?`, [
       nuevoEstado,
+      fechaCompletada,
       id,
     ])
 
