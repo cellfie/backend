@@ -1,6 +1,7 @@
 import pool from "../../db.js"
 import { validationResult } from "express-validator"
 import { registrarPagoInterno } from "../pago.controller.js"
+import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
 // Generar número de factura único para ventas de equipos
 const generarNumeroFactura = async () => {
@@ -236,8 +237,8 @@ export const createVentaEquipo = async (req, res) => {
   try {
     await connection.beginTransaction()
 
-    // Al inicio de la función createVentaEquipo, después de obtener la conexión:
-    const fechaActual = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    const fechaActual = formatearFechaParaDB()
 
     // Verificar que el punto de venta existe
     const [puntosVenta] = await connection.query("SELECT * FROM puntos_venta WHERE id = ?", [punto_venta_id])
@@ -306,14 +307,14 @@ export const createVentaEquipo = async (req, res) => {
     // Generar número de factura
     const numeroFactura = await generarNumeroFactura()
 
-    // Insertar la venta
+    // Insertar la venta usando la fecha formateada correctamente
     const [resultVenta] = await connection.query(
       `INSERT INTO ventas_equipos (
                 numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago,
                 equipo_id, precio_usd, precio_ars, tipo_cambio,
                 porcentaje_interes, monto_interes, porcentaje_descuento, monto_descuento,
-                total_usd, total_ars
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                total_usd, total_ars, fecha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         numeroFactura,
         clienteId,
@@ -330,6 +331,7 @@ export const createVentaEquipo = async (req, res) => {
         montoDescuentoUSD,
         totalUSD,
         totalARS,
+        fechaActual,
       ],
     )
 
@@ -532,8 +534,8 @@ export const anularVentaEquipo = async (req, res) => {
   try {
     await connection.beginTransaction()
 
-    // Al inicio de la función anularVentaEquipo:
-    const fechaActual = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    const fechaActual = formatearFechaParaDB()
 
     // Verificar que la venta existe y no está anulada
     const [ventas] = await connection.query("SELECT * FROM ventas_equipos WHERE id = ?", [id])
@@ -645,10 +647,11 @@ export const anularVentaEquipo = async (req, res) => {
       )
 
       for (const pago of pagos) {
-        await connection.query(
-          "UPDATE pagos SET anulado = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?",
-          [fechaActual, `Anulación de venta de equipo: ${motivo}`, pago.id],
-        )
+        await connection.query("UPDATE pagos SET anulado = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?", [
+          fechaActual,
+          `Anulación de venta de equipo: ${motivo}`,
+          pago.id,
+        ])
       }
     }
 
