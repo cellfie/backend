@@ -1,5 +1,6 @@
 import pool from "../../db.js"
 import { validationResult } from "express-validator"
+import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
 // Obtener todas las devoluciones
 export const getDevoluciones = async (req, res) => {
@@ -179,7 +180,10 @@ export const createDevolucion = async (req, res) => {
 
     const venta = ventas[0]
 
-    // Insertar la devolución y obtener el ID
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    const fechaActual = formatearFechaParaDB()
+
+    // Insertar la devolución y obtener el ID con fecha correcta
     const [result] = await connection.query(
       `
       INSERT INTO devoluciones (
@@ -188,9 +192,9 @@ export const createDevolucion = async (req, res) => {
         usuario_id,
         diferencia,
         cliente_id
-      ) VALUES (?, NOW(), ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?)
     `,
-      [venta_id, req.user.id, diferencia, cliente_id],
+      [venta_id, fechaActual, req.user.id, diferencia, cliente_id],
     )
 
     const devolucionId = result.insertId
@@ -296,20 +300,20 @@ export const createDevolucion = async (req, res) => {
         await connection.query(
           `
           UPDATE detalle_ventas 
-          SET devuelto = 1, devolucion_id = ?, fecha_devolucion = NOW() 
+          SET devuelto = 1, devolucion_id = ?, fecha_devolucion = ? 
           WHERE id = ?
         `,
-          [devolucionId, detalleVenta.id],
+          [devolucionId, fechaActual, detalleVenta.id],
         )
       } else {
         // Si es devolución parcial, no marcamos como devuelto pero guardamos la referencia
         await connection.query(
           `
           UPDATE detalle_ventas 
-          SET devolucion_id = ?, fecha_devolucion = NOW() 
+          SET devolucion_id = ?, fecha_devolucion = ? 
           WHERE id = ?
         `,
-          [devolucionId, detalleVenta.id],
+          [devolucionId, fechaActual, detalleVenta.id],
         )
       }
 
@@ -336,7 +340,7 @@ export const createDevolucion = async (req, res) => {
             usuario_id, 
             fecha, 
             notas
-          ) VALUES (?, ?, ?, 'devolucion', ?, ?, NOW(), ?)
+          ) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?)
         `,
           [
             producto.producto_id,
@@ -344,6 +348,7 @@ export const createDevolucion = async (req, res) => {
             producto.cantidad,
             devolucionId,
             req.user.id,
+            fechaActual,
             `Devolución de producto${producto.es_reemplazo ? " de reemplazo" : ""} - Venta #${venta.numero_factura}`,
           ],
         )
@@ -358,7 +363,7 @@ export const createDevolucion = async (req, res) => {
             devolucion_id, 
             usuario_id, 
             fecha
-          ) VALUES (?, ?, ?, ?, ?, NOW())
+          ) VALUES (?, ?, ?, ?, ?, ?)
         `,
           [
             producto.producto_id,
@@ -366,6 +371,7 @@ export const createDevolucion = async (req, res) => {
             `Producto${producto.es_reemplazo ? " de reemplazo" : ""} defectuoso - Devolución`,
             devolucionId,
             req.user.id,
+            fechaActual,
           ],
         )
       }
@@ -412,7 +418,7 @@ export const createDevolucion = async (req, res) => {
           usuario_id, 
           fecha, 
           notas
-        ) VALUES (?, ?, ?, 'devolucion', ?, ?, NOW(), ?)
+        ) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?)
       `,
         [
           producto.producto_id,
@@ -420,6 +426,7 @@ export const createDevolucion = async (req, res) => {
           -producto.cantidad,
           devolucionId,
           req.user.id,
+          fechaActual,
           `Producto de reemplazo - Devolución de venta #${venta.numero_factura}`,
         ],
       )
@@ -437,7 +444,7 @@ export const createDevolucion = async (req, res) => {
           es_reemplazo,
           devolucion_id,
           fecha_devolucion
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, NOW())
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
       `,
         [
           venta_id,
@@ -447,6 +454,7 @@ export const createDevolucion = async (req, res) => {
           producto.precio,
           producto.precio * producto.cantidad,
           devolucionId,
+          fechaActual,
         ],
       )
     }
@@ -478,10 +486,10 @@ export const createDevolucion = async (req, res) => {
         await connection.query(
           `
           UPDATE cuentas_corrientes 
-          SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+          SET saldo = ?, fecha_ultimo_movimiento = ? 
           WHERE id = ?
         `,
-          [nuevoSaldo, cuenta.id],
+          [nuevoSaldo, fechaActual, cuenta.id],
         )
 
         // Registrar el movimiento en la cuenta corriente
@@ -498,7 +506,7 @@ export const createDevolucion = async (req, res) => {
             fecha, 
             usuario_id, 
             notas
-          ) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', NOW(), ?, ?)
+          ) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
         `,
           [
             cuenta.id,
@@ -506,6 +514,7 @@ export const createDevolucion = async (req, res) => {
             saldoAnterior.toFixed(2),
             nuevoSaldo.toFixed(2),
             devolucionId,
+            fechaActual,
             req.user.id,
             `Crédito por devolución - Venta #${venta.numero_factura}`,
           ],
@@ -537,7 +546,7 @@ export const createDevolucion = async (req, res) => {
             fecha, 
             usuario_id, 
             notas
-          ) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', NOW(), ?, ?)
+          ) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
         `,
           [
             cuentaCorrienteId,
@@ -545,6 +554,7 @@ export const createDevolucion = async (req, res) => {
             saldoInicial.toFixed(2), // Saldo anterior (cuenta nueva)
             nuevoSaldo.toFixed(2), // Nuevo saldo
             devolucionId,
+            fechaActual,
             req.user.id,
             `Crédito por devolución - Venta #${venta.numero_factura}`,
           ],
@@ -566,10 +576,11 @@ export const createDevolucion = async (req, res) => {
           usuario_id, 
           punto_venta_id, 
           notas
-        ) VALUES (?, NOW(), ?, 'devolucion', ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?, ?)
       `,
         [
           diferencia,
+          fechaActual,
           devolucionId,
           tipo_pago,
           cliente_id,
@@ -597,10 +608,10 @@ export const createDevolucion = async (req, res) => {
           await connection.query(
             `
             UPDATE cuentas_corrientes 
-            SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+            SET saldo = ?, fecha_ultimo_movimiento = ? 
             WHERE id = ?
           `,
-            [nuevoSaldo, cuenta.id],
+            [nuevoSaldo, fechaActual, cuenta.id],
           )
 
           // Registrar el movimiento en la cuenta corriente
@@ -617,7 +628,7 @@ export const createDevolucion = async (req, res) => {
               fecha, 
               usuario_id, 
               notas
-            ) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', NOW(), ?, ?)
+            ) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
           `,
             [
               cuenta.id,
@@ -625,6 +636,7 @@ export const createDevolucion = async (req, res) => {
               saldoAnterior.toFixed(2),
               nuevoSaldo.toFixed(2),
               devolucionId,
+              fechaActual,
               req.user.id,
               `Cargo por diferencia en devolución - Venta #${venta.numero_factura}`,
             ],
@@ -656,7 +668,7 @@ export const createDevolucion = async (req, res) => {
               fecha, 
               usuario_id, 
               notas
-            ) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', NOW(), ?, ?)
+            ) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
           `,
             [
               cuentaCorrienteId,
@@ -664,6 +676,7 @@ export const createDevolucion = async (req, res) => {
               saldoInicial.toFixed(2), // Saldo anterior (cuenta nueva)
               nuevoSaldo.toFixed(2), // Nuevo saldo
               devolucionId,
+              fechaActual,
               req.user.id,
               `Cargo por diferencia en devolución - Venta #${venta.numero_factura}`,
             ],
@@ -771,6 +784,9 @@ export const anularDevolucion = async (req, res) => {
     const [ventas] = await connection.query("SELECT * FROM ventas WHERE id = ?", [devolucion.venta_id])
     const venta = ventas[0]
 
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    const fechaActual = formatearFechaParaDB()
+
     // Revertir los cambios en el inventario para los productos devueltos (tipo normal)
     for (const producto of productosDevueltos) {
       if (producto.tipo_devolucion === "normal") {
@@ -796,7 +812,7 @@ export const anularDevolucion = async (req, res) => {
             usuario_id, 
             fecha, 
             notas
-          ) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, NOW(), ?)
+          ) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, ?, ?)
         `,
           [
             producto.producto_id,
@@ -804,6 +820,7 @@ export const anularDevolucion = async (req, res) => {
             -producto.cantidad,
             id,
             req.user.id,
+            fechaActual,
             `Anulación de devolución - Venta #${venta.numero_factura}`,
           ],
         )
@@ -844,7 +861,7 @@ export const anularDevolucion = async (req, res) => {
           usuario_id, 
           fecha, 
           notas
-        ) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, NOW(), ?)
+        ) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, ?, ?)
       `,
         [
           producto.producto_id,
@@ -852,6 +869,7 @@ export const anularDevolucion = async (req, res) => {
           producto.cantidad,
           id,
           req.user.id,
+          fechaActual,
           `Anulación de devolución - Venta #${venta.numero_factura}`,
         ],
       )
@@ -890,10 +908,10 @@ export const anularDevolucion = async (req, res) => {
         await connection.query(
           `
           UPDATE cuentas_corrientes 
-          SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+          SET saldo = ?, fecha_ultimo_movimiento = ? 
           WHERE id = ?
         `,
-          [nuevoSaldo, cuenta.id],
+          [nuevoSaldo, fechaActual, cuenta.id],
         )
 
         // Registrar movimiento en la cuenta corriente
@@ -910,7 +928,7 @@ export const anularDevolucion = async (req, res) => {
             fecha, 
             usuario_id, 
             notas
-          ) VALUES (?, ?, ?, ?, ?, ?, 'anulacion_devolucion', NOW(), ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, 'anulacion_devolucion', ?, ?, ?)
         `,
           [
             cuenta.id,
@@ -919,6 +937,7 @@ export const anularDevolucion = async (req, res) => {
             saldoAnterior.toFixed(2),
             nuevoSaldo.toFixed(2),
             id,
+            fechaActual,
             req.user.id,
             `Anulación de devolución - Venta #${venta.numero_factura}: ${motivo}`,
           ],
@@ -930,10 +949,10 @@ export const anularDevolucion = async (req, res) => {
     await connection.query(
       `
       UPDATE devoluciones 
-      SET anulada = 1, fecha_anulacion = NOW(), motivo_anulacion = ? 
+      SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ? 
       WHERE id = ?
     `,
-      [motivo, id],
+      [fechaActual, motivo, id],
     )
 
     // Verificar si la venta tiene otras devoluciones activas

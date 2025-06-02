@@ -1,5 +1,6 @@
 import pool from "../../db.js"
 import { validationResult } from "express-validator"
+import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
 // Función para asegurar que el precio sea un número
 const ensurePriceIsNumber = (price) => {
@@ -25,6 +26,8 @@ export const getProductos = async (req, res) => {
                 p.nombre, 
                 p.descripcion, 
                 p.precio, 
+                p.fecha_creacion,
+                p.fecha_actualizacion,
                 c.nombre AS categoria,
                 c.id AS categoria_id
             FROM productos p
@@ -111,6 +114,8 @@ export const getProductoById = async (req, res) => {
                 p.nombre, 
                 p.descripcion, 
                 p.precio, 
+                p.fecha_creacion,
+                p.fecha_actualizacion,
                 c.nombre AS categoria,
                 c.id AS categoria_id
             FROM productos p
@@ -205,10 +210,13 @@ export const createProducto = async (req, res) => {
   try {
     await connection.beginTransaction()
 
-    // Insertar el producto
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    const fechaActual = formatearFechaParaDB()
+
+    // Insertar el producto con fecha y hora correcta
     const [result] = await connection.query(
-      "INSERT INTO productos (codigo, nombre, descripcion, precio, categoria_id) VALUES (?, ?, ?, ?, ?)",
-      [codigo, nombre, descripcion, precioNumerico, categoria_id || null],
+      "INSERT INTO productos (codigo, nombre, descripcion, precio, categoria_id, fecha_creacion, fecha_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [codigo, nombre, descripcion, precioNumerico, categoria_id || null, fechaActual, fechaActual],
     )
 
     const productoId = result.insertId
@@ -272,10 +280,13 @@ export const updateProducto = async (req, res) => {
     const precioActual = productos[0].precio
     const precioFinal = precio === precioActual ? precioActual : precioNumerico
 
-    // Actualizar el producto
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    const fechaActual = formatearFechaParaDB()
+
+    // Actualizar el producto con fecha de actualización correcta
     await connection.query(
-      "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, categoria_id = ? WHERE id = ?",
-      [codigo, nombre, descripcion, precioFinal, categoria_id || null, id],
+      "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, categoria_id = ?, fecha_actualizacion = ? WHERE id = ?",
+      [codigo, nombre, descripcion, precioFinal, categoria_id || null, fechaActual, id],
     )
 
     // Si se proporciona punto_venta_id y stock, actualizar el inventario
@@ -351,6 +362,8 @@ export const searchProductos = async (req, res) => {
                 p.nombre, 
                 p.descripcion, 
                 p.precio, 
+                p.fecha_creacion,
+                p.fecha_actualizacion,
                 c.nombre AS categoria,
                 c.id AS categoria_id
             FROM productos p
