@@ -320,12 +320,19 @@ export const getVentas = async (req, res) => {
   }
 }
 
-// Obtener una venta por ID con su detalle
+// CORREGIDO: Obtener una venta por ID con su detalle - Manejo mejorado de errores
 export const getVentaById = async (req, res) => {
   try {
     const { id } = req.params
 
-    // Obtener la información de la venta
+    // Validar que el ID sea un número válido
+    if (!id || isNaN(Number(id))) {
+      return res.status(400).json({ message: "ID de venta inválido" })
+    }
+
+    const ventaId = Number(id)
+
+    // Obtener la información de la venta con manejo de errores mejorado
     const [ventas] = await pool.query(
       `
       SELECT 
@@ -344,9 +351,9 @@ export const getVentaById = async (req, res) => {
         v.tiene_devoluciones,
         v.fecha_creacion,
         v.fecha_actualizacion,
-        c.id AS cliente_id,
-        c.nombre AS cliente_nombre,
-        c.telefono AS cliente_telefono,
+        COALESCE(c.id, NULL) AS cliente_id,
+        COALESCE(c.nombre, NULL) AS cliente_nombre,
+        COALESCE(c.telefono, NULL) AS cliente_telefono,
         u.id AS usuario_id,
         u.nombre AS usuario_nombre,
         pv.id AS punto_venta_id,
@@ -354,71 +361,119 @@ export const getVentaById = async (req, res) => {
         v.tipo_pago AS tipo_pago_nombre
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
-      JOIN usuarios u ON v.usuario_id = u.id
-      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      LEFT JOIN usuarios u ON v.usuario_id = u.id
+      LEFT JOIN puntos_venta pv ON v.punto_venta_id = pv.id
       WHERE v.id = ?
       `,
-      [id],
+      [ventaId],
     )
 
-    if (ventas.length === 0) {
+    if (!ventas || ventas.length === 0) {
       return res.status(404).json({ message: "Venta no encontrada" })
     }
 
-    // Obtener el detalle de la venta incluyendo información de devoluciones
-    const [detalles] = await pool.query(
-      `
-      SELECT 
-        dv.id,
-        dv.producto_id,
-        p.codigo AS producto_codigo,
-        p.nombre AS producto_nombre,
-        dv.cantidad,
-        dv.precio_unitario,
-        dv.precio_con_descuento,
-        dv.subtotal,
-        dv.devuelto,
-        dv.es_reemplazo,
-        dv.devolucion_id,
-        dv.fecha_devolucion,
-        COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
-      FROM detalle_ventas dv
-      JOIN productos p ON dv.producto_id = p.id
-      LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id AND dd.devolucion_id IN (
-        SELECT id FROM devoluciones WHERE venta_id = ? AND anulada = 0
-      )
-      WHERE dv.venta_id = ? AND (dv.es_reemplazo = 1 OR dv.devuelto = 0)
-      GROUP BY dv.id
-      `,
-      [id, id],
-    )
+    const venta = ventas[0]
 
-    // Obtener los pagos asociados a esta venta
-    const [pagos] = await pool.query(
-      `
-      SELECT 
-        p.id,
-        p.monto,
-        p.fecha,
-        p.anulado,
-        p.tipo_pago AS tipo_pago_nombre
-      FROM pagos p
-      WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta' AND p.anulado = 0
-      `,
-      [id],
-    )
-
-    // Construir la respuesta
-    const venta = {
-      ...ventas[0],
-      detalles,
-      pagos,
+    // Verificar que los datos esenciales existen
+    if (!venta.usuario_id || !venta.punto_venta_id) {
+      console.error(`Datos faltantes en venta ${ventaId}:`, {
+        usuario_id: venta.usuario_id,
+        punto_venta_id: venta.punto_venta_id,
+      })
+      return res.status(500).json({ message: "Datos de venta incompletos" })
     }
+
+    // Obtener el detalle de la venta con manejo de errores mejorado
+    try {
+      const [detalles] = await pool.query(
+        `
+        SELECT 
+          dv.id,
+          dv.producto_id,
+          COALESCE(p.codigo, 'N/A') AS producto_codigo,
+          COALESCE(p.nombre, 'Producto eliminado') AS producto_nombre,
+          dv.cantidad,
+          dv.precio_unitario,
+          dv.precio_con_descuento,
+          dv.subtotal,
+          COALESCE(dv.devuelto, 0) AS devuelto,
+          COALESCE(dv.es_reemplazo, 0) AS es_reemplazo,
+          dv.devolucion_id,
+          dv.fecha_devolucion,
+          COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
+        FROM detalle_ventas dv
+        LEFT JOIN productos p ON dv.producto_id = p.id
+        LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id 
+          AND dd.devolucion_id IN (
+            SELECT id FROM devoluciones WHERE venta_id = ? AND COALESCE(anulada, 0) = 0
+          )
+        WHERE dv.venta_id = ?
+        GROUP BY dv.id, dv.producto_id, p.codigo, p.nombre, dv.cantidad, 
+                 dv.precio_unitario, dv.precio_con_descuento, dv.subtotal, 
+                 dv.devuelto, dv.es_reemplazo, dv.devolucion_id, dv.fecha_devolucion
+        ORDER BY dv.id
+        `,
+        [ventaId, ventaId],
+      )
+
+      venta.detalles = detalles || []
+    } catch (detalleError) {
+      console.error(`Error al obtener detalles de venta ${ventaId}:`, detalleError)
+      venta.detalles = []
+    }
+
+    // Obtener los pagos asociados a esta venta con manejo de errores
+    try {
+      const [pagos] = await pool.query(
+        `
+        SELECT 
+          p.id,
+          p.monto,
+          p.fecha,
+          COALESCE(p.anulado, 0) AS anulado,
+          COALESCE(p.tipo_pago, 'N/A') AS tipo_pago_nombre
+        FROM pagos p
+        WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta' AND COALESCE(p.anulado, 0) = 0
+        ORDER BY p.fecha DESC
+        `,
+        [ventaId],
+      )
+
+      venta.pagos = pagos || []
+    } catch (pagoError) {
+      console.error(`Error al obtener pagos de venta ${ventaId}:`, pagoError)
+      venta.pagos = []
+    }
+
+    // Asegurar que todos los campos numéricos sean números
+    venta.subtotal = Number(venta.subtotal) || 0
+    venta.porcentaje_interes = Number(venta.porcentaje_interes) || 0
+    venta.monto_interes = Number(venta.monto_interes) || 0
+    venta.porcentaje_descuento = Number(venta.porcentaje_descuento) || 0
+    venta.monto_descuento = Number(venta.monto_descuento) || 0
+    venta.total = Number(venta.total) || 0
+    venta.anulada = Boolean(venta.anulada)
+    venta.tiene_devoluciones = Boolean(venta.tiene_devoluciones)
+
+    // Procesar detalles para asegurar tipos correctos
+    venta.detalles = venta.detalles.map((detalle) => ({
+      ...detalle,
+      cantidad: Number(detalle.cantidad) || 0,
+      precio_unitario: Number(detalle.precio_unitario) || 0,
+      precio_con_descuento: Number(detalle.precio_con_descuento) || 0,
+      subtotal: Number(detalle.subtotal) || 0,
+      cantidad_devuelta: Number(detalle.cantidad_devuelta) || 0,
+      devuelto: Boolean(detalle.devuelto),
+      es_reemplazo: Boolean(detalle.es_reemplazo),
+    }))
 
     res.json(venta)
   } catch (error) {
-    console.error("Error al obtener venta:", error)
-    res.status(500).json({ message: "Error al obtener venta" })
+    console.error("Error al obtener venta por ID:", error)
+    res.status(500).json({
+      message: "Error interno del servidor al obtener la venta",
+      error: process.env.NODE_ENV === "development" ? error.message : "Error interno",
+    })
   }
 }
 
