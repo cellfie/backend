@@ -49,7 +49,7 @@ export const getVentasPaginadas = async (req, res) => {
   try {
     const { page = 1, limit = 50, fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas, search } = req.query
 
-    const offset = (page - 1) * limit
+    const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
 
     let sql = `
       SELECT 
@@ -66,8 +66,6 @@ export const getVentasPaginadas = async (req, res) => {
         v.fecha_anulacion,
         v.motivo_anulacion,
         v.tiene_devoluciones,
-        v.fecha_creacion,
-        v.fecha_actualizacion,
         c.id AS cliente_id,
         c.nombre AS cliente_nombre,
         c.telefono AS cliente_telefono,
@@ -97,22 +95,18 @@ export const getVentasPaginadas = async (req, res) => {
 
     // Filtrar por fecha de inicio
     if (fecha_inicio) {
-      const fechaInicioFormatted = formatLocalDate(new Date(fecha_inicio), true)
-      sql += ` AND v.fecha >= ?`
-      countSql += ` AND v.fecha >= ?`
-      params.push(fechaInicioFormatted)
-      countParams.push(fechaInicioFormatted)
+      sql += ` AND DATE(v.fecha) >= ?`
+      countSql += ` AND DATE(v.fecha) >= ?`
+      params.push(fecha_inicio)
+      countParams.push(fecha_inicio)
     }
 
     // Filtrar por fecha de fin
     if (fecha_fin) {
-      const fechaFinDate = new Date(fecha_fin)
-      fechaFinDate.setHours(23, 59, 59, 999)
-      const fechaFinFormatted = formatLocalDate(fechaFinDate, true)
-      sql += ` AND v.fecha <= ?`
-      countSql += ` AND v.fecha <= ?`
-      params.push(fechaFinFormatted)
-      countParams.push(fechaFinFormatted)
+      sql += ` AND DATE(v.fecha) <= ?`
+      countSql += ` AND DATE(v.fecha) <= ?`
+      params.push(fecha_fin)
+      countParams.push(fecha_fin)
     }
 
     // Filtrar por cliente
@@ -133,10 +127,11 @@ export const getVentasPaginadas = async (req, res) => {
 
     // Filtrar por estado de anulación
     if (anuladas !== undefined) {
+      const anuladaValue = anuladas === "true" ? 1 : 0
       sql += ` AND v.anulada = ?`
       countSql += ` AND v.anulada = ?`
-      params.push(anuladas === "true" ? 1 : 0)
-      countParams.push(anuladas === "true" ? 1 : 0)
+      params.push(anuladaValue)
+      countParams.push(anuladaValue)
     }
 
     // Búsqueda general
@@ -157,7 +152,7 @@ export const getVentasPaginadas = async (req, res) => {
     const [countResult] = await pool.query(countSql, countParams)
 
     const total = countResult[0].total
-    const totalPages = Math.ceil(total / limit)
+    const totalPages = Math.ceil(total / Number.parseInt(limit))
 
     res.json({
       ventas,
@@ -166,13 +161,16 @@ export const getVentasPaginadas = async (req, res) => {
         totalPages,
         totalItems: total,
         itemsPerPage: Number.parseInt(limit),
-        hasNextPage: page < totalPages,
-        hasPrevPage: page > 1,
+        hasNextPage: Number.parseInt(page) < totalPages,
+        hasPrevPage: Number.parseInt(page) > 1,
       },
     })
   } catch (error) {
     console.error("Error al obtener ventas paginadas:", error)
-    res.status(500).json({ message: "Error al obtener ventas paginadas" })
+    res.status(500).json({
+      message: "Error al obtener ventas paginadas",
+      error: error.message,
+    })
   }
 }
 
@@ -232,8 +230,6 @@ export const getVentas = async (req, res) => {
         v.fecha_anulacion,
         v.motivo_anulacion,
         v.tiene_devoluciones,
-        v.fecha_creacion,
-        v.fecha_actualizacion,
         c.id AS cliente_id,
         c.nombre AS cliente_nombre,
         c.telefono AS cliente_telefono,
@@ -253,18 +249,14 @@ export const getVentas = async (req, res) => {
 
     // Filtrar por fecha de inicio
     if (fecha_inicio) {
-      const fechaInicioFormatted = formatLocalDate(new Date(fecha_inicio), true)
-      sql += ` AND v.fecha >= ?`
-      params.push(fechaInicioFormatted)
+      sql += ` AND DATE(v.fecha) >= ?`
+      params.push(fecha_inicio)
     }
 
     // Filtrar por fecha de fin
     if (fecha_fin) {
-      const fechaFinDate = new Date(fecha_fin)
-      fechaFinDate.setHours(23, 59, 59, 999)
-      const fechaFinFormatted = formatLocalDate(fechaFinDate, true)
-      sql += ` AND v.fecha <= ?`
-      params.push(fechaFinFormatted)
+      sql += ` AND DATE(v.fecha) <= ?`
+      params.push(fecha_fin)
     }
 
     // Filtrar por cliente
@@ -281,8 +273,9 @@ export const getVentas = async (req, res) => {
 
     // Filtrar por estado de anulación
     if (anuladas !== undefined) {
+      const anuladaValue = anuladas === "true" ? 1 : 0
       sql += ` AND v.anulada = ?`
-      params.push(anuladas === "true" ? 1 : 0)
+      params.push(anuladaValue)
     }
 
     // Ordenar por fecha descendente
@@ -293,7 +286,10 @@ export const getVentas = async (req, res) => {
     res.json(ventas)
   } catch (error) {
     console.error("Error al obtener ventas:", error)
-    res.status(500).json({ message: "Error al obtener ventas" })
+    res.status(500).json({
+      message: "Error al obtener ventas",
+      error: error.message,
+    })
   }
 }
 
