@@ -2,6 +2,8 @@ import { Router } from "express"
 import { check } from "express-validator"
 import {
   getVentas,
+  getVentasPaginadas,
+  searchVentasRapido,
   getVentaById,
   createVenta,
   anularVenta,
@@ -18,10 +20,7 @@ router.use(verifyToken())
 // Validaciones para crear venta
 const validateVenta = [
   check("punto_venta_id").isNumeric().withMessage("ID de punto de venta inválido"),
-  // Cambiamos la validación de tipo_pago_id a tipo_pago
-  check("tipo_pago")
-    .isString()
-    .withMessage("Tipo de pago inválido"),
+  check("tipo_pago").isString().withMessage("Tipo de pago inválido"),
   check("productos").isArray({ min: 1 }).withMessage("Debe incluir al menos un producto"),
   check("productos.*.id").isNumeric().withMessage("ID de producto inválido"),
   check("productos.*.cantidad")
@@ -41,6 +40,8 @@ const validateAnulacion = [check("motivo").notEmpty().withMessage("El motivo de 
 
 // Rutas
 router.get("/", verifyToken(["admin", "empleado"]), getVentas) // Solo admin y empleados pueden ver ventas
+router.get("/paginadas", verifyToken(["admin", "empleado"]), getVentasPaginadas) // Nueva ruta para paginación
+router.get("/search-rapido", verifyToken(["admin", "empleado"]), searchVentasRapido) // Nueva ruta para búsqueda rápida
 router.get("/estadisticas", verifyToken(["admin"]), getEstadisticasVentas) // Solo admin puede ver estadísticas
 router.get("/:id", verifyToken(["admin", "empleado"]), getVentaById) // Solo admin y empleados pueden ver detalles de una venta
 router.get("/:id/devoluciones", verifyToken(["admin", "empleado"]), getDevolucionesByVenta) // Obtener devoluciones de una venta
