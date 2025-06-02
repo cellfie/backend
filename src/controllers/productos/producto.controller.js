@@ -31,6 +31,8 @@ export const getProductosPaginados = async (req, res) => {
       max_stock,
       sort_by = "fecha_creacion",
       sort_order = "DESC",
+      fecha_inicio,
+      fecha_fin,
     } = req.query
 
     const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
@@ -101,6 +103,17 @@ export const getProductosPaginados = async (req, res) => {
     if (max_stock !== undefined) {
       baseQuery += ` AND COALESCE(i.stock, 0) <= ?`
       params.push(max_stock)
+    }
+
+    // Filtrar por rango de fechas
+    if (fecha_inicio) {
+      baseQuery += ` AND DATE(p.fecha_creacion) >= ?`
+      params.push(fecha_inicio)
+    }
+
+    if (fecha_fin) {
+      baseQuery += ` AND DATE(p.fecha_creacion) <= ?`
+      params.push(fecha_fin)
     }
 
     // Contar total de registros
