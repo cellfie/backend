@@ -1,5 +1,6 @@
 import pool from "../../db.js"
 import { validationResult } from "express-validator"
+import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
 // Obtener todos los equipos con información de punto de venta
 export const getEquipos = async (req, res) => {
@@ -16,6 +17,8 @@ export const getEquipos = async (req, res) => {
                 e.descripcion, 
                 e.imei, 
                 e.fecha_ingreso,
+                e.fecha_creacion,
+                e.fecha_actualizacion,
                 e.tipo_cambio,
                 e.tipo_cambio_original,
                 e.vendido,
@@ -59,6 +62,8 @@ export const getEquipoById = async (req, res) => {
                 e.descripcion, 
                 e.imei, 
                 e.fecha_ingreso,
+                e.fecha_creacion,
+                e.fecha_actualizacion,
                 e.tipo_cambio,
                 e.tipo_cambio_original,
                 e.vendido,
@@ -140,13 +145,17 @@ export const createEquipo = async (req, res) => {
       }
     }
 
-    // Insertar el equipo con el tipo de cambio actual y guardarlo como tipo_cambio_original
+    // Usar la función utilitaria para obtener la fecha actual
+    const fechaCreacion = formatearFechaParaDB()
+
+    // Insertar el equipo con fecha_creacion y fecha_actualizacion
     const [result] = await pool.query(
       `INSERT INTO equipos (
-                marca, modelo, memoria, color, bateria, precio, descripcion, 
-                imei, fecha_ingreso, punto_venta_id, tipo_cambio, tipo_cambio_original, 
-                vendido, venta_id, es_canje, cliente_canje_id, venta_canje_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            marca, modelo, memoria, color, bateria, precio, descripcion, 
+            imei, fecha_ingreso, punto_venta_id, tipo_cambio, tipo_cambio_original, 
+            vendido, venta_id, es_canje, cliente_canje_id, venta_canje_id,
+            fecha_creacion, fecha_actualizacion
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         marca,
         modelo,
@@ -159,12 +168,14 @@ export const createEquipo = async (req, res) => {
         fecha_ingreso,
         punto_venta_id,
         currentTipoCambio,
-        currentTipoCambio, // Guardar el tipo de cambio actual como original
-        0, // No vendido por defecto
-        null, // Sin venta asociada
+        currentTipoCambio,
+        0,
+        null,
         es_canje ? 1 : 0,
         cliente_canje_id || null,
         venta_canje_id || null,
+        fechaCreacion,
+        fechaCreacion,
       ],
     )
 
@@ -239,25 +250,27 @@ export const updateEquipo = async (req, res) => {
       }
     }
 
-    // Actualizar el equipo PRESERVANDO los campos de plan canje
+    // Usar la función utilitaria para obtener la fecha actual
+    const fechaActualizacion = formatearFechaParaDB()
+
+    // Actualizar el equipo PRESERVANDO los campos de plan canje y actualizando fecha_actualizacion
     await pool.query(
       `UPDATE equipos SET 
-                marca = ?, 
-                modelo = ?, 
-                memoria = ?, 
-                color = ?, 
-                bateria = ?, 
-                precio = ?, 
-                descripcion = ?, 
-                imei = ?, 
-                fecha_ingreso = ?,
-                punto_venta_id = ?,
-                tipo_cambio = ?,
-                vendido = ?,
-                venta_id = ?
-                -- NOTA: NO actualizamos es_canje, cliente_canje_id, venta_canje_id
-                -- para preservar la información del plan canje
-            WHERE id = ?`,
+            marca = ?, 
+            modelo = ?, 
+            memoria = ?, 
+            color = ?, 
+            bateria = ?, 
+            precio = ?, 
+            descripcion = ?, 
+            imei = ?, 
+            fecha_ingreso = ?,
+            punto_venta_id = ?,
+            tipo_cambio = ?,
+            vendido = ?,
+            venta_id = ?,
+            fecha_actualizacion = ?
+        WHERE id = ?`,
       [
         marca || equipoActual.marca,
         modelo || equipoActual.modelo,
@@ -272,6 +285,7 @@ export const updateEquipo = async (req, res) => {
         currentTipoCambio,
         vendido !== undefined ? vendido : equipoActual.vendido,
         venta_id !== undefined ? venta_id : equipoActual.venta_id,
+        fechaActualizacion,
         id,
       ],
     )
@@ -323,6 +337,8 @@ export const searchEquipos = async (req, res) => {
                 e.descripcion, 
                 e.imei, 
                 e.fecha_ingreso,
+                e.fecha_creacion,
+                e.fecha_actualizacion,
                 e.tipo_cambio,
                 e.tipo_cambio_original,
                 e.vendido,
@@ -398,14 +414,14 @@ export const searchEquipos = async (req, res) => {
       params.push(max_bateria)
     }
 
-    // Filtrar por rango de fecha de ingreso
+    // Filtrar por rango de fecha de creación
     if (fecha_inicio) {
-      sql += ` AND e.fecha_ingreso >= ?`
+      sql += ` AND e.fecha_creacion >= ?`
       params.push(fecha_inicio)
     }
 
     if (fecha_fin) {
-      sql += ` AND e.fecha_ingreso <= ?`
+      sql += ` AND e.fecha_creacion <= ?`
       params.push(fecha_fin)
     }
 
@@ -428,6 +444,209 @@ export const searchEquipos = async (req, res) => {
   } catch (error) {
     console.error("Error al buscar equipos:", error)
     res.status(500).json({ message: "Error al buscar equipos" })
+  }
+}
+
+// Obtener equipos paginados con filtros optimizados
+export const getEquiposPaginados = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      query,
+      imei,
+      punto_venta_id,
+      min_precio,
+      max_precio,
+      min_bateria,
+      max_bateria,
+      fecha_inicio,
+      fecha_fin,
+      incluir_vendidos = "true",
+      solo_canjes = "false",
+    } = req.query
+
+    const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
+
+    let sql = `
+      SELECT 
+        e.id, 
+        e.marca, 
+        e.modelo, 
+        e.memoria, 
+        e.color, 
+        e.bateria, 
+        e.precio, 
+        e.descripcion, 
+        e.imei, 
+        e.fecha_ingreso,
+        e.fecha_creacion,
+        e.fecha_actualizacion,
+        e.tipo_cambio,
+        e.tipo_cambio_original,
+        e.vendido,
+        e.venta_id,
+        e.es_canje,
+        e.cliente_canje_id,
+        e.venta_canje_id,
+        c.nombre AS cliente_canje,
+        v.numero_factura AS venta_canje,
+        pv.id AS punto_venta_id,
+        pv.nombre AS punto_venta
+      FROM equipos e
+      JOIN puntos_venta pv ON e.punto_venta_id = pv.id
+      LEFT JOIN clientes c ON e.cliente_canje_id = c.id
+      LEFT JOIN ventas_equipos v ON e.venta_canje_id = v.id
+      WHERE 1=1
+    `
+
+    let countSql = `
+      SELECT COUNT(*) as total
+      FROM equipos e
+      JOIN puntos_venta pv ON e.punto_venta_id = pv.id
+      LEFT JOIN clientes c ON e.cliente_canje_id = c.id
+      LEFT JOIN ventas_equipos v ON e.venta_canje_id = v.id
+      WHERE 1=1
+    `
+
+    const params = []
+
+    // Aplicar filtros
+    if (imei) {
+      sql += ` AND e.imei LIKE ?`
+      countSql += ` AND e.imei LIKE ?`
+      params.push(`%${imei}%`)
+    }
+
+    if (query) {
+      const searchTerms = query.trim().split(/\s+/)
+      if (searchTerms.length > 0) {
+        const termConditions = searchTerms
+          .map(() => `(e.marca LIKE ? OR e.modelo LIKE ? OR CONCAT(e.marca, ' ', e.modelo) LIKE ?)`)
+          .join(" AND ")
+
+        sql += ` AND (${termConditions})`
+        countSql += ` AND (${termConditions})`
+
+        searchTerms.forEach((term) => {
+          const searchPattern = `%${term}%`
+          params.push(searchPattern, searchPattern, searchPattern)
+        })
+      }
+    }
+
+    if (punto_venta_id) {
+      sql += ` AND e.punto_venta_id = ?`
+      countSql += ` AND e.punto_venta_id = ?`
+      params.push(punto_venta_id)
+    }
+
+    if (min_precio !== undefined) {
+      sql += ` AND e.precio >= ?`
+      countSql += ` AND e.precio >= ?`
+      params.push(min_precio)
+    }
+
+    if (max_precio !== undefined) {
+      sql += ` AND e.precio <= ?`
+      countSql += ` AND e.precio <= ?`
+      params.push(max_precio)
+    }
+
+    if (min_bateria !== undefined) {
+      sql += ` AND e.bateria >= ?`
+      countSql += ` AND e.bateria >= ?`
+      params.push(min_bateria)
+    }
+
+    if (max_bateria !== undefined) {
+      sql += ` AND e.bateria <= ?`
+      countSql += ` AND e.bateria >= ?`
+      params.push(max_bateria)
+    }
+
+    if (fecha_inicio) {
+      sql += ` AND e.fecha_creacion >= ?`
+      countSql += ` AND e.fecha_creacion >= ?`
+      params.push(fecha_inicio)
+    }
+
+    if (fecha_fin) {
+      sql += ` AND e.fecha_creacion <= ?`
+      countSql += ` AND e.fecha_creacion <= ?`
+      params.push(fecha_fin)
+    }
+
+    if (incluir_vendidos === "false") {
+      sql += ` AND e.vendido = 0`
+      countSql += ` AND e.vendido = 0`
+    }
+
+    if (solo_canjes === "true") {
+      sql += ` AND e.es_canje = 1`
+      countSql += ` AND e.es_canje = 1`
+    }
+
+    // Obtener el total de registros
+    const [countResult] = await pool.query(countSql, params)
+    const total = countResult[0].total
+
+    // Agregar ordenamiento y paginación
+    sql += ` ORDER BY e.fecha_creacion DESC LIMIT ? OFFSET ?`
+    params.push(Number.parseInt(limit), offset)
+
+    // Obtener los equipos paginados
+    const [equipos] = await pool.query(sql, params)
+
+    res.json({
+      equipos,
+      pagination: {
+        page: Number.parseInt(page),
+        limit: Number.parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / Number.parseInt(limit)),
+        hasNext: Number.parseInt(page) < Math.ceil(total / Number.parseInt(limit)),
+        hasPrev: Number.parseInt(page) > 1,
+      },
+    })
+  } catch (error) {
+    console.error("Error al obtener equipos paginados:", error)
+    res.status(500).json({ message: "Error al obtener equipos paginados" })
+  }
+}
+
+// Búsqueda rápida de equipos (para autocompletado)
+export const searchEquiposRapido = async (req, res) => {
+  try {
+    const { q } = req.query
+
+    if (!q || q.length < 2) {
+      return res.json([])
+    }
+
+    const [equipos] = await pool.query(
+      `
+      SELECT 
+        e.id,
+        e.marca,
+        e.modelo,
+        e.imei,
+        e.precio,
+        e.vendido,
+        pv.nombre AS punto_venta
+      FROM equipos e
+      JOIN puntos_venta pv ON e.punto_venta_id = pv.id
+      WHERE (e.marca LIKE ? OR e.modelo LIKE ? OR e.imei LIKE ?)
+      ORDER BY e.fecha_creacion DESC
+      LIMIT 10
+    `,
+      [`%${q}%`, `%${q}%`, `%${q}%`],
+    )
+
+    res.json(equipos)
+  } catch (error) {
+    console.error("Error en búsqueda rápida de equipos:", error)
+    res.status(500).json({ message: "Error en búsqueda rápida" })
   }
 }
 
