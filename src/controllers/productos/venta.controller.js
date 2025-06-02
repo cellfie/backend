@@ -335,36 +335,36 @@ export const getVentaById = async (req, res) => {
     // Obtener la información de la venta con manejo de errores mejorado
     const [ventas] = await pool.query(
       `
-      SELECT 
-        v.id, 
-        v.numero_factura, 
-        v.fecha, 
-        v.subtotal, 
-        v.porcentaje_interes,
-        v.monto_interes,
-        v.porcentaje_descuento,
-        v.monto_descuento,
-        v.total,
-        v.anulada,
-        v.fecha_anulacion,
-        v.motivo_anulacion,
-        v.tiene_devoluciones,
-        v.fecha_creacion,
-        v.fecha_actualizacion,
-        COALESCE(c.id, NULL) AS cliente_id,
-        COALESCE(c.nombre, NULL) AS cliente_nombre,
-        COALESCE(c.telefono, NULL) AS cliente_telefono,
-        u.id AS usuario_id,
-        u.nombre AS usuario_nombre,
-        pv.id AS punto_venta_id,
-        pv.nombre AS punto_venta_nombre,
-        v.tipo_pago AS tipo_pago_nombre
-      FROM ventas v
-      LEFT JOIN clientes c ON v.cliente_id = c.id
-      LEFT JOIN usuarios u ON v.usuario_id = u.id
-      LEFT JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      WHERE v.id = ?
-      `,
+  SELECT 
+    v.id, 
+    v.numero_factura, 
+    v.fecha, 
+    v.subtotal, 
+    v.porcentaje_interes,
+    v.monto_interes,
+    v.porcentaje_descuento,
+    v.monto_descuento,
+    v.total,
+    v.anulada,
+    v.fecha_anulacion,
+    v.motivo_anulacion,
+    v.tiene_devoluciones,
+    v.fecha_creacion,
+    v.fecha_actualizacion,
+    v.cliente_id,
+    v.usuario_id,
+    v.punto_venta_id,
+    v.tipo_pago AS tipo_pago_nombre,
+    COALESCE(c.nombre, NULL) AS cliente_nombre,
+    COALESCE(c.telefono, NULL) AS cliente_telefono,
+    COALESCE(u.nombre, 'Usuario eliminado') AS usuario_nombre,
+    COALESCE(pv.nombre, 'Punto de venta eliminado') AS punto_venta_nombre
+  FROM ventas v
+  LEFT JOIN clientes c ON v.cliente_id = c.id
+  LEFT JOIN usuarios u ON v.usuario_id = u.id
+  LEFT JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+  WHERE v.id = ?
+  `,
       [ventaId],
     )
 
@@ -374,13 +374,13 @@ export const getVentaById = async (req, res) => {
 
     const venta = ventas[0]
 
-    // Verificar que los datos esenciales existen
+    // Verificar que los datos básicos existen (pero no fallar si faltan referencias)
     if (!venta.usuario_id || !venta.punto_venta_id) {
-      console.error(`Datos faltantes en venta ${ventaId}:`, {
+      console.warn(`Datos de referencia faltantes en venta ${ventaId}:`, {
         usuario_id: venta.usuario_id,
         punto_venta_id: venta.punto_venta_id,
       })
-      return res.status(500).json({ message: "Datos de venta incompletos" })
+      // Continuar con valores por defecto en lugar de fallar
     }
 
     // Obtener el detalle de la venta con manejo de errores mejorado
