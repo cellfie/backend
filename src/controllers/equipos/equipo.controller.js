@@ -183,7 +183,7 @@ export const createEquipo = async (req, res) => {
   }
 }
 
-// Actualizar un equipo
+// Actualizar un equipo - FUNCIÓN CORREGIDA
 export const updateEquipo = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -208,21 +208,22 @@ export const updateEquipo = async (req, res) => {
     punto_venta_id,
     vendido,
     venta_id,
-    es_canje,
-    cliente_canje_id,
-    venta_canje_id,
+    // IMPORTANTE: No recibir es_canje, cliente_canje_id, venta_canje_id del body
+    // para preservar los valores originales
   } = req.body
 
   try {
-    // Verificar si el equipo existe
+    // Verificar si el equipo existe y obtener sus datos actuales
     const [equipos] = await pool.query("SELECT * FROM equipos WHERE id = ?", [id])
 
     if (equipos.length === 0) {
       return res.status(404).json({ message: "Equipo no encontrado" })
     }
 
+    const equipoActual = equipos[0]
+
     // Verificar si ya existe otro equipo con el mismo IMEI
-    if (imei && imei !== equipos[0].imei) {
+    if (imei && imei !== equipoActual.imei) {
       const [existingEquipos] = await pool.query("SELECT * FROM equipos WHERE imei = ? AND id != ?", [imei, id])
 
       if (existingEquipos.length > 0) {
@@ -231,14 +232,14 @@ export const updateEquipo = async (req, res) => {
     }
 
     // Verificar que el cliente existe si se proporciona un ID
-    if (cliente_canje_id) {
-      const [clientes] = await pool.query("SELECT * FROM clientes WHERE id = ?", [cliente_canje_id])
+    if (equipoActual.cliente_canje_id) {
+      const [clientes] = await pool.query("SELECT * FROM clientes WHERE id = ?", [equipoActual.cliente_canje_id])
       if (clientes.length === 0) {
         return res.status(404).json({ message: "Cliente de canje no encontrado" })
       }
     }
 
-    // Actualizar el equipo con el tipo de cambio actual pero mantener el tipo_cambio_original
+    // Actualizar el equipo PRESERVANDO los campos de plan canje
     await pool.query(
       `UPDATE equipos SET 
                 marca = ?, 
@@ -253,33 +254,36 @@ export const updateEquipo = async (req, res) => {
                 punto_venta_id = ?,
                 tipo_cambio = ?,
                 vendido = ?,
-                venta_id = ?,
-                es_canje = ?,
-                cliente_canje_id = ?,
-                venta_canje_id = ?
+                venta_id = ?
+                -- NOTA: NO actualizamos es_canje, cliente_canje_id, venta_canje_id
+                -- para preservar la información del plan canje
             WHERE id = ?`,
       [
-        marca || equipos[0].marca,
-        modelo || equipos[0].modelo,
-        memoria !== undefined ? memoria : equipos[0].memoria,
-        color !== undefined ? color : equipos[0].color,
-        bateria !== undefined ? bateria : equipos[0].bateria,
-        precio !== undefined ? precio : equipos[0].precio,
-        descripcion !== undefined ? descripcion : equipos[0].descripcion,
-        imei || equipos[0].imei,
-        fecha_ingreso || equipos[0].fecha_ingreso,
-        punto_venta_id || equipos[0].punto_venta_id,
+        marca || equipoActual.marca,
+        modelo || equipoActual.modelo,
+        memoria !== undefined ? memoria : equipoActual.memoria,
+        color !== undefined ? color : equipoActual.color,
+        bateria !== undefined ? bateria : equipoActual.bateria,
+        precio !== undefined ? precio : equipoActual.precio,
+        descripcion !== undefined ? descripcion : equipoActual.descripcion,
+        imei || equipoActual.imei,
+        fecha_ingreso || equipoActual.fecha_ingreso,
+        punto_venta_id || equipoActual.punto_venta_id,
         currentTipoCambio,
-        vendido !== undefined ? vendido : equipos[0].vendido,
-        venta_id !== undefined ? venta_id : equipos[0].venta_id,
-        es_canje !== undefined ? (es_canje ? 1 : 0) : equipos[0].es_canje,
-        cliente_canje_id !== undefined ? cliente_canje_id : equipos[0].cliente_canje_id,
-        venta_canje_id !== undefined ? venta_canje_id : equipos[0].venta_canje_id,
+        vendido !== undefined ? vendido : equipoActual.vendido,
+        venta_id !== undefined ? venta_id : equipoActual.venta_id,
         id,
       ],
     )
 
-    res.json({ message: "Equipo actualizado exitosamente" })
+    res.json({
+      message: "Equipo actualizado exitosamente",
+      preservedCanjeInfo: {
+        es_canje: equipoActual.es_canje,
+        cliente_canje_id: equipoActual.cliente_canje_id,
+        venta_canje_id: equipoActual.venta_canje_id,
+      },
+    })
   } catch (error) {
     console.error("Error al actualizar equipo:", error)
 
@@ -426,7 +430,6 @@ export const searchEquipos = async (req, res) => {
     res.status(500).json({ message: "Error al buscar equipos" })
   }
 }
-
 
 // Eliminar un equipo
 export const deleteEquipo = async (req, res) => {
