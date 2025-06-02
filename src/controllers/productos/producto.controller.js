@@ -107,12 +107,12 @@ export const getProductosPaginados = async (req, res) => {
 
     // Filtrar por rango de fechas
     if (fecha_inicio) {
-      baseQuery += ` AND DATE(p.fecha_creacion) >= ?`
+      baseQuery += ` AND p.fecha_creacion >= ?`
       params.push(fecha_inicio)
     }
 
     if (fecha_fin) {
-      baseQuery += ` AND DATE(p.fecha_creacion) <= ?`
+      baseQuery += ` AND p.fecha_creacion <= ?`
       params.push(fecha_fin)
     }
 
