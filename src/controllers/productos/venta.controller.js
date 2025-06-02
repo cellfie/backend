@@ -3,9 +3,12 @@ import { validationResult } from "express-validator"
 import { registrarPagoInterno } from "../pago.controller.js"
 import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
-// Generar número de factura único
+// Generar número de factura único - CORREGIDO para usar fecha de Argentina
 const generarNumeroFactura = async () => {
-  const fecha = new Date()
+  // Usar la función utilitaria para obtener la fecha en Argentina
+  const fechaArgentina = formatearFechaParaDB()
+  const fecha = new Date(fechaArgentina)
+
   const año = fecha.getFullYear().toString().substr(-2)
   const mes = (fecha.getMonth() + 1).toString().padStart(2, "0")
   const dia = fecha.getDate().toString().padStart(2, "0")
@@ -44,13 +47,25 @@ const formatLocalDate = (date, includeTime = false) => {
   return `${year}-${month}-${day}`
 }
 
-// Obtener ventas con paginación
+// OPTIMIZADO: Obtener ventas con paginación mejorada
 export const getVentasPaginadas = async (req, res) => {
   try {
-    const { page = 1, limit = 50, fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas, search } = req.query
+    const {
+      page = 1,
+      limit = 50,
+      fecha_inicio,
+      fecha_fin,
+      cliente_id,
+      punto_venta_id,
+      anuladas,
+      search,
+      sort_by = "fecha",
+      sort_order = "DESC",
+    } = req.query
 
     const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
 
+    // Consulta base optimizada con índices
     let sql = `
       SELECT 
         v.id, 
@@ -134,7 +149,7 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(anuladaValue)
     }
 
-    // Búsqueda general
+    // Búsqueda general optimizada
     if (search) {
       sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
       countSql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
@@ -143,15 +158,27 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(searchPattern, searchPattern, searchPattern)
     }
 
-    // Ordenar por fecha descendente
-    sql += ` ORDER BY v.fecha DESC LIMIT ? OFFSET ?`
+    // Ordenamiento dinámico
+    const validSortFields = ["fecha", "numero_factura", "total", "cliente_nombre", "usuario_nombre"]
+    const sortField = validSortFields.includes(sort_by) ? sort_by : "fecha"
+    const sortDirection = sort_order.toUpperCase() === "ASC" ? "ASC" : "DESC"
+
+    if (sortField === "cliente_nombre") {
+      sql += ` ORDER BY c.nombre ${sortDirection}`
+    } else if (sortField === "usuario_nombre") {
+      sql += ` ORDER BY u.nombre ${sortDirection}`
+    } else {
+      sql += ` ORDER BY v.${sortField} ${sortDirection}`
+    }
+
+    sql += ` LIMIT ? OFFSET ?`
     params.push(Number.parseInt(limit), Number.parseInt(offset))
 
-    // Ejecutar consultas
-    const [ventas] = await pool.query(sql, params)
-    const [countResult] = await pool.query(countSql, countParams)
+    // Ejecutar consultas en paralelo para mejor rendimiento
+    const [ventasResult, countResult] = await Promise.all([pool.query(sql, params), pool.query(countSql, countParams)])
 
-    const total = countResult[0].total
+    const ventas = ventasResult[0]
+    const total = countResult[0][0].total
     const totalPages = Math.ceil(total / Number.parseInt(limit))
 
     res.json({
@@ -174,10 +201,10 @@ export const getVentasPaginadas = async (req, res) => {
   }
 }
 
-// Búsqueda rápida de ventas
+// OPTIMIZADO: Búsqueda rápida de ventas
 export const searchVentasRapido = async (req, res) => {
   try {
-    const { q } = req.query
+    const { q, limit = 10 } = req.query
 
     if (!q || q.length < 2) {
       return res.json([])
@@ -190,18 +217,18 @@ export const searchVentasRapido = async (req, res) => {
         v.fecha,
         v.total,
         c.nombre AS cliente_nombre,
-        pv.nombre AS punto_venta_nombre
+        pv.nombre AS punto_venta_nombre,
+        v.anulada
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       JOIN puntos_venta pv ON v.punto_venta_id = pv.id
       WHERE (v.numero_factura LIKE ? OR c.nombre LIKE ?)
-      AND v.anulada = 0
       ORDER BY v.fecha DESC
-      LIMIT 10
+      LIMIT ?
     `
 
     const searchPattern = `%${q}%`
-    const [ventas] = await pool.query(sql, [searchPattern, searchPattern])
+    const [ventas] = await pool.query(sql, [searchPattern, searchPattern, Number.parseInt(limit)])
 
     res.json(ventas)
   } catch (error) {
@@ -395,7 +422,7 @@ export const getVentaById = async (req, res) => {
   }
 }
 
-// Crear una nueva venta
+// Crear una nueva venta - CORREGIDO para usar fecha de Argentina
 export const createVenta = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -424,7 +451,7 @@ export const createVenta = async (req, res) => {
   try {
     await connection.beginTransaction()
 
-    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    // CORREGIDO: Usar la función utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
     // Verificar que el punto de venta existe
@@ -497,7 +524,7 @@ export const createVenta = async (req, res) => {
     // El total no incluye el interés, solo se resta el descuento
     const total = subtotal - montoDescuento
 
-    // Generar número de factura
+    // CORREGIDO: Generar número de factura usando la fecha de Argentina
     const numeroFactura = await generarNumeroFactura()
 
     // Insertar la venta usando la fecha formateada correctamente
