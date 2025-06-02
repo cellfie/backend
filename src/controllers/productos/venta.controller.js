@@ -349,8 +349,6 @@ export const getVentaById = async (req, res) => {
     v.fecha_anulacion,
     v.motivo_anulacion,
     v.tiene_devoluciones,
-    v.fecha_creacion,
-    v.fecha_actualizacion,
     v.cliente_id,
     v.usuario_id,
     v.punto_venta_id,
@@ -359,11 +357,11 @@ export const getVentaById = async (req, res) => {
     COALESCE(c.telefono, NULL) AS cliente_telefono,
     COALESCE(u.nombre, 'Usuario eliminado') AS usuario_nombre,
     COALESCE(pv.nombre, 'Punto de venta eliminado') AS punto_venta_nombre
-  FROM ventas v
-  LEFT JOIN clientes c ON v.cliente_id = c.id
-  LEFT JOIN usuarios u ON v.usuario_id = u.id
-  LEFT JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-  WHERE v.id = ?
+FROM ventas v
+LEFT JOIN clientes c ON v.cliente_id = c.id
+LEFT JOIN usuarios u ON v.usuario_id = u.id
+LEFT JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+WHERE v.id = ?
   `,
       [ventaId],
     )
