@@ -16,112 +16,242 @@ const ensurePriceIsNumber = (price) => {
   return 0 // Valor por defecto si no se puede convertir
 }
 
-// Obtener todos los productos con información de categoría, inventario y descuentos
-export const getProductos = async (req, res) => {
+// NUEVA FUNCIÓN: Obtener productos con paginación y optimización
+export const getProductosPaginados = async (req, res) => {
   try {
-    const [productos] = await pool.query(`
-            SELECT 
-                p.id, 
-                p.codigo, 
-                p.nombre, 
-                p.descripcion, 
-                p.precio, 
-                p.fecha_creacion,
-                p.fecha_actualizacion,
-                c.nombre AS categoria,
-                c.id AS categoria_id
-            FROM productos p
-            LEFT JOIN categorias c ON p.categoria_id = c.id
-            WHERE c.activo = 1 OR c.activo IS NULL
-            ORDER BY p.fecha_creacion DESC
-        `)
+    const {
+      page = 1,
+      limit = 50,
+      search = "",
+      categoria_id,
+      punto_venta_id,
+      min_precio,
+      max_precio,
+      min_stock,
+      max_stock,
+      sort_by = "fecha_creacion",
+      sort_order = "DESC",
+    } = req.query
 
-    // Obtener inventario para cada producto
-    for (const producto of productos) {
-      // Obtener información de inventario
-      const [inventario] = await pool.query(
-        `
-                SELECT 
-                    i.stock,
-                    pv.id AS punto_venta_id,
-                    pv.nombre AS punto_venta
-                FROM inventario i
-                JOIN puntos_venta pv ON i.punto_venta_id = pv.id
-                WHERE i.producto_id = ?
-            `,
-        [producto.id],
-      )
+    const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
 
-      // Obtener descuentos activos
-      const [descuentos] = await pool.query(
-        `
-                SELECT 
-                    id,
-                    porcentaje,
-                    fecha_inicio,
-                    fecha_fin
-                FROM descuentos
-                WHERE producto_id = ? 
-                AND activo = 1 
-                AND fecha_inicio <= CURDATE() 
-                AND fecha_fin >= CURDATE()
-                ORDER BY fecha_creacion DESC
-                LIMIT 1
-            `,
-        [producto.id],
-      )
+    // Construir la consulta base con JOINs optimizados
+    let baseQuery = `
+      FROM productos p
+      LEFT JOIN categorias c ON p.categoria_id = c.id AND (c.activo = 1 OR c.activo IS NULL)
+      LEFT JOIN inventario i ON p.id = i.producto_id
+      LEFT JOIN puntos_venta pv ON i.punto_venta_id = pv.id
+      LEFT JOIN (
+        SELECT 
+          producto_id,
+          id,
+          porcentaje,
+          fecha_inicio,
+          fecha_fin
+        FROM descuentos d1
+        WHERE d1.activo = 1 
+        AND d1.fecha_inicio <= CURDATE() 
+        AND d1.fecha_fin >= CURDATE()
+        AND d1.id = (
+          SELECT MAX(d2.id) 
+          FROM descuentos d2 
+          WHERE d2.producto_id = d1.producto_id 
+          AND d2.activo = 1
+          AND d2.fecha_inicio <= CURDATE() 
+          AND d2.fecha_fin >= CURDATE()
+        )
+      ) desc_activo ON p.id = desc_activo.producto_id
+      WHERE 1=1
+    `
 
-      // Asignar inventario y descuento al producto
-      if (inventario.length > 0) {
-        producto.stock = inventario[0].stock
-        producto.punto_venta_id = inventario[0].punto_venta_id
-        producto.punto_venta = inventario[0].punto_venta
-      } else {
-        producto.stock = 0
-        producto.punto_venta_id = null
-        producto.punto_venta = null
-      }
+    const params = []
 
-      if (descuentos.length > 0) {
-        producto.descuento = {
-          id: descuentos[0].id,
-          porcentaje: descuentos[0].porcentaje,
-          fecha_inicio: descuentos[0].fecha_inicio,
-          fecha_fin: descuentos[0].fecha_fin,
-        }
-      } else {
-        producto.descuento = null
-      }
+    // Aplicar filtros
+    if (search) {
+      baseQuery += ` AND (p.nombre LIKE ? OR p.codigo LIKE ? OR p.descripcion LIKE ?)`
+      const searchTerm = `%${search}%`
+      params.push(searchTerm, searchTerm, searchTerm)
     }
 
-    res.json(productos)
+    if (categoria_id) {
+      baseQuery += ` AND p.categoria_id = ?`
+      params.push(categoria_id)
+    }
+
+    if (punto_venta_id) {
+      baseQuery += ` AND i.punto_venta_id = ?`
+      params.push(punto_venta_id)
+    }
+
+    if (min_precio !== undefined) {
+      baseQuery += ` AND p.precio >= ?`
+      params.push(min_precio)
+    }
+
+    if (max_precio !== undefined) {
+      baseQuery += ` AND p.precio <= ?`
+      params.push(max_precio)
+    }
+
+    if (min_stock !== undefined) {
+      baseQuery += ` AND COALESCE(i.stock, 0) >= ?`
+      params.push(min_stock)
+    }
+
+    if (max_stock !== undefined) {
+      baseQuery += ` AND COALESCE(i.stock, 0) <= ?`
+      params.push(max_stock)
+    }
+
+    // Contar total de registros
+    const countQuery = `SELECT COUNT(DISTINCT p.id) as total ${baseQuery}`
+    const [countResult] = await pool.query(countQuery, params)
+    const total = countResult[0].total
+
+    // Consulta principal con todos los datos necesarios
+    const dataQuery = `
+      SELECT DISTINCT
+        p.id, 
+        p.codigo, 
+        p.nombre, 
+        p.descripcion, 
+        p.precio, 
+        p.fecha_creacion,
+        p.fecha_actualizacion,
+        c.nombre AS categoria,
+        c.id AS categoria_id,
+        COALESCE(i.stock, 0) AS stock,
+        pv.id AS punto_venta_id,
+        pv.nombre AS punto_venta,
+        desc_activo.id AS descuento_id,
+        desc_activo.porcentaje AS descuento_porcentaje,
+        desc_activo.fecha_inicio AS descuento_fecha_inicio,
+        desc_activo.fecha_fin AS descuento_fecha_fin
+      ${baseQuery}
+      ORDER BY p.${sort_by} ${sort_order}
+      LIMIT ? OFFSET ?
+    `
+
+    const [productos] = await pool.query(dataQuery, [...params, Number.parseInt(limit), offset])
+
+    // Calcular metadatos de paginación
+    const totalPages = Math.ceil(total / Number.parseInt(limit))
+    const hasNextPage = Number.parseInt(page) < totalPages
+    const hasPrevPage = Number.parseInt(page) > 1
+
+    res.json({
+      data: productos,
+      pagination: {
+        currentPage: Number.parseInt(page),
+        totalPages,
+        totalItems: total,
+        itemsPerPage: Number.parseInt(limit),
+        hasNextPage,
+        hasPrevPage,
+      },
+    })
+  } catch (error) {
+    console.error("Error al obtener productos paginados:", error)
+    res.status(500).json({ message: "Error al obtener productos" })
+  }
+}
+
+// Obtener todos los productos (mantener para compatibilidad, pero optimizado)
+export const getProductos = async (req, res) => {
+  try {
+    // Usar la función paginada con un límite alto para mantener compatibilidad
+    req.query = { ...req.query, limit: 1000, page: 1 }
+    const result = await getProductosPaginados(req, res)
+    return result
   } catch (error) {
     console.error("Error al obtener productos:", error)
     res.status(500).json({ message: "Error al obtener productos" })
   }
 }
 
-// Obtener un producto por ID
+// NUEVA FUNCIÓN: Búsqueda rápida para autocompletado
+export const searchProductosRapido = async (req, res) => {
+  try {
+    const { q, limit = 10 } = req.query
+
+    if (!q || q.length < 2) {
+      return res.json([])
+    }
+
+    const [productos] = await pool.query(
+      `
+      SELECT 
+        p.id,
+        p.codigo,
+        p.nombre,
+        p.precio,
+        COALESCE(i.stock, 0) AS stock
+      FROM productos p
+      LEFT JOIN inventario i ON p.id = i.producto_id
+      WHERE (p.nombre LIKE ? OR p.codigo LIKE ?)
+      ORDER BY p.nombre ASC
+      LIMIT ?
+    `,
+      [`%${q}%`, `%${q}%`, Number.parseInt(limit)],
+    )
+
+    res.json(productos)
+  } catch (error) {
+    console.error("Error en búsqueda rápida:", error)
+    res.status(500).json({ message: "Error en búsqueda rápida" })
+  }
+}
+
+// Obtener un producto por ID (optimizado)
 export const getProductoById = async (req, res) => {
   try {
     const { id } = req.params
 
     const [productos] = await pool.query(
       `
-            SELECT 
-                p.id, 
-                p.codigo, 
-                p.nombre, 
-                p.descripcion, 
-                p.precio, 
-                p.fecha_creacion,
-                p.fecha_actualizacion,
-                c.nombre AS categoria,
-                c.id AS categoria_id
-            FROM productos p
-            LEFT JOIN categorias c ON p.categoria_id = c.id
-            WHERE p.id = ?
-        `,
+      SELECT 
+        p.id, 
+        p.codigo, 
+        p.nombre, 
+        p.descripcion, 
+        p.precio, 
+        p.fecha_creacion,
+        p.fecha_actualizacion,
+        c.nombre AS categoria,
+        c.id AS categoria_id,
+        COALESCE(i.stock, 0) AS stock,
+        pv.id AS punto_venta_id,
+        pv.nombre AS punto_venta,
+        desc_activo.id AS descuento_id,
+        desc_activo.porcentaje AS descuento_porcentaje,
+        desc_activo.fecha_inicio AS descuento_fecha_inicio,
+        desc_activo.fecha_fin AS descuento_fecha_fin
+      FROM productos p
+      LEFT JOIN categorias c ON p.categoria_id = c.id
+      LEFT JOIN inventario i ON p.id = i.producto_id
+      LEFT JOIN puntos_venta pv ON i.punto_venta_id = pv.id
+      LEFT JOIN (
+        SELECT 
+          producto_id,
+          id,
+          porcentaje,
+          fecha_inicio,
+          fecha_fin
+        FROM descuentos d1
+        WHERE d1.activo = 1 
+        AND d1.fecha_inicio <= CURDATE() 
+        AND d1.fecha_fin >= CURDATE()
+        AND d1.id = (
+          SELECT MAX(d2.id) 
+          FROM descuentos d2 
+          WHERE d2.producto_id = d1.producto_id 
+          AND d2.activo = 1
+          AND d2.fecha_inicio <= CURDATE() 
+          AND d2.fecha_fin >= CURDATE()
+        )
+      ) desc_activo ON p.id = desc_activo.producto_id
+      WHERE p.id = ?
+      `,
       [id],
     )
 
@@ -129,64 +259,7 @@ export const getProductoById = async (req, res) => {
       return res.status(404).json({ message: "Producto no encontrado" })
     }
 
-    const producto = productos[0]
-
-    // Obtener información de inventario
-    const [inventario] = await pool.query(
-      `
-            SELECT 
-                i.stock,
-                pv.id AS punto_venta_id,
-                pv.nombre AS punto_venta
-            FROM inventario i
-            JOIN puntos_venta pv ON i.punto_venta_id = pv.id
-            WHERE i.producto_id = ?
-        `,
-      [producto.id],
-    )
-
-    // Obtener descuentos activos
-    const [descuentos] = await pool.query(
-      `
-            SELECT 
-                id,
-                porcentaje,
-                fecha_inicio,
-                fecha_fin
-            FROM descuentos
-            WHERE producto_id = ? 
-            AND activo = 1 
-            AND fecha_inicio <= CURDATE() 
-            AND fecha_fin >= CURDATE()
-            ORDER BY fecha_creacion DESC
-            LIMIT 1
-        `,
-      [producto.id],
-    )
-
-    // Asignar inventario y descuento al producto
-    if (inventario.length > 0) {
-      producto.stock = inventario[0].stock
-      producto.punto_venta_id = inventario[0].punto_venta_id
-      producto.punto_venta = inventario[0].punto_venta
-    } else {
-      producto.stock = 0
-      producto.punto_venta_id = null
-      producto.punto_venta = null
-    }
-
-    if (descuentos.length > 0) {
-      producto.descuento = {
-        id: descuentos[0].id,
-        porcentaje: descuentos[0].porcentaje,
-        fecha_inicio: descuentos[0].fecha_inicio,
-        fecha_fin: descuentos[0].fecha_fin,
-      }
-    } else {
-      producto.descuento = null
-    }
-
-    res.json(producto)
+    res.json(productos[0])
   } catch (error) {
     console.error("Error al obtener producto:", error)
     res.status(500).json({ message: "Error al obtener producto" })
@@ -350,135 +423,12 @@ export const deleteProducto = async (req, res) => {
   }
 }
 
-// Buscar productos
+// Buscar productos (mantener para compatibilidad)
 export const searchProductos = async (req, res) => {
   try {
-    const { query, categoria_id, punto_venta_id, min_precio, max_precio, min_stock, max_stock } = req.query
-
-    let sql = `
-            SELECT 
-                p.id, 
-                p.codigo, 
-                p.nombre, 
-                p.descripcion, 
-                p.precio, 
-                p.fecha_creacion,
-                p.fecha_actualizacion,
-                c.nombre AS categoria,
-                c.id AS categoria_id
-            FROM productos p
-            LEFT JOIN categorias c ON p.categoria_id = c.id
-            LEFT JOIN inventario i ON p.id = i.producto_id
-            WHERE 1=1
-        `
-
-    const params = []
-
-    // Filtrar por término de búsqueda
-    if (query) {
-      sql += ` AND (p.nombre LIKE ? OR p.codigo LIKE ? OR p.descripcion LIKE ?)`
-      const searchTerm = `%${query}%`
-      params.push(searchTerm, searchTerm, searchTerm)
-    }
-
-    // Filtrar por categoría
-    if (categoria_id) {
-      sql += ` AND p.categoria_id = ?`
-      params.push(categoria_id)
-    }
-
-    // Filtrar por punto de venta
-    if (punto_venta_id) {
-      sql += ` AND i.punto_venta_id = ?`
-      params.push(punto_venta_id)
-    }
-
-    // Filtrar por rango de precio
-    if (min_precio !== undefined) {
-      sql += ` AND p.precio >= ?`
-      params.push(min_precio)
-    }
-
-    if (max_precio !== undefined) {
-      sql += ` AND p.precio <= ?`
-      params.push(max_precio)
-    }
-
-    // Filtrar por rango de stock
-    if (min_stock !== undefined) {
-      sql += ` AND i.stock >= ?`
-      params.push(min_stock)
-    }
-
-    if (max_stock !== undefined) {
-      sql += ` AND i.stock <= ?`
-      params.push(max_stock)
-    }
-
-    // Agrupar por producto para evitar duplicados
-    sql += ` GROUP BY p.id ORDER BY p.nombre ASC`
-
-    const [productos] = await pool.query(sql, params)
-
-    // Obtener inventario y descuentos para cada producto
-    for (const producto of productos) {
-      // Obtener información de inventario
-      const [inventario] = await pool.query(
-        `
-                SELECT 
-                    i.stock,
-                    pv.id AS punto_venta_id,
-                    pv.nombre AS punto_venta
-                FROM inventario i
-                JOIN puntos_venta pv ON i.punto_venta_id = pv.id
-                WHERE i.producto_id = ?
-            `,
-        [producto.id],
-      )
-
-      // Obtener descuentos activos
-      const [descuentos] = await pool.query(
-        `
-                SELECT 
-                    id,
-                    porcentaje,
-                    fecha_inicio,
-                    fecha_fin
-                FROM descuentos
-                WHERE producto_id = ? 
-                AND activo = 1 
-                AND fecha_inicio <= CURDATE() 
-                AND fecha_fin >= CURDATE()
-                ORDER BY fecha_creacion DESC
-                LIMIT 1
-            `,
-        [producto.id],
-      )
-
-      // Asignar inventario y descuento al producto
-      if (inventario.length > 0) {
-        producto.stock = inventario[0].stock
-        producto.punto_venta_id = inventario[0].punto_venta_id
-        producto.punto_venta = inventario[0].punto_venta
-      } else {
-        producto.stock = 0
-        producto.punto_venta_id = null
-        producto.punto_venta = null
-      }
-
-      if (descuentos.length > 0) {
-        producto.descuento = {
-          id: descuentos[0].id,
-          porcentaje: descuentos[0].porcentaje,
-          fecha_inicio: descuentos[0].fecha_inicio,
-          fecha_fin: descuentos[0].fecha_fin,
-        }
-      } else {
-        producto.descuento = null
-      }
-    }
-
-    res.json(productos)
+    // Redirigir a la función paginada
+    req.query = { ...req.query, page: 1, limit: 100 }
+    return await getProductosPaginados(req, res)
   } catch (error) {
     console.error("Error al buscar productos:", error)
     res.status(500).json({ message: "Error al buscar productos" })
