@@ -4,6 +4,7 @@ import {
   getVentas,
   getVentasPaginadas,
   searchVentasRapido,
+  searchVentasByProducto,
   getVentaById,
   createVenta,
   anularVenta,
@@ -42,6 +43,7 @@ const validateAnulacion = [check("motivo").notEmpty().withMessage("El motivo de 
 router.get("/", verifyToken(["admin", "empleado"]), getVentas) // Solo admin y empleados pueden ver ventas
 router.get("/paginadas", verifyToken(["admin", "empleado"]), getVentasPaginadas) // Nueva ruta para paginación
 router.get("/search-rapido", verifyToken(["admin", "empleado"]), searchVentasRapido) // Nueva ruta para búsqueda rápida
+router.get("/search-by-producto", verifyToken(["admin", "empleado"]), searchVentasByProducto) // NUEVA: Búsqueda por producto
 router.get("/estadisticas", verifyToken(["admin"]), getEstadisticasVentas) // Solo admin puede ver estadísticas
 router.get("/:id", verifyToken(["admin", "empleado"]), getVentaById) // Solo admin y empleados pueden ver detalles de una venta
 router.get("/:id/devoluciones", verifyToken(["admin", "empleado"]), getDevolucionesByVenta) // Obtener devoluciones de una venta

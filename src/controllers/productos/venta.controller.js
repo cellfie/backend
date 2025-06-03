@@ -47,7 +47,7 @@ const formatLocalDate = (date, includeTime = false) => {
   return `${year}-${month}-${day}`
 }
 
-// OPTIMIZADO: Obtener ventas con paginación mejorada
+// OPTIMIZADO: Obtener ventas con paginación mejorada y búsqueda por productos
 export const getVentasPaginadas = async (req, res) => {
   try {
     const {
@@ -59,6 +59,8 @@ export const getVentasPaginadas = async (req, res) => {
       punto_venta_id,
       anuladas,
       search,
+      producto_id,
+      producto_nombre,
       sort_by = "fecha",
       sort_order = "DESC",
     } = req.query
@@ -67,7 +69,7 @@ export const getVentasPaginadas = async (req, res) => {
 
     // Consulta base optimizada con índices
     let sql = `
-      SELECT 
+      SELECT DISTINCT
         v.id, 
         v.numero_factura, 
         v.fecha, 
@@ -88,20 +90,26 @@ export const getVentasPaginadas = async (req, res) => {
         u.nombre AS usuario_nombre,
         pv.id AS punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        v.tipo_pago AS tipo_pago_nombre
+        v.tipo_pago AS tipo_pago_nombre,
+        GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres,
+        COUNT(DISTINCT dv.id) AS cantidad_productos
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       JOIN usuarios u ON v.usuario_id = u.id
       JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+      LEFT JOIN productos p ON dv.producto_id = p.id
       WHERE 1=1
     `
 
     let countSql = `
-      SELECT COUNT(*) as total
+      SELECT COUNT(DISTINCT v.id) as total
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       JOIN usuarios u ON v.usuario_id = u.id
       JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+      LEFT JOIN productos p ON dv.producto_id = p.id
       WHERE 1=1
     `
 
@@ -119,7 +127,7 @@ export const getVentasPaginadas = async (req, res) => {
     // Filtrar por fecha de fin
     if (fecha_fin) {
       sql += ` AND DATE(v.fecha) <= ?`
-      countSql += ` AND DATE(v.fecha) <= ?`
+      countSql += ` AND DATE(v.fecha) >= ?`
       params.push(fecha_fin)
       countParams.push(fecha_fin)
     }
@@ -149,6 +157,37 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(anuladaValue)
     }
 
+    // MEJORADO: Búsqueda por producto específico
+    if (producto_id) {
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv2 
+        WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
+      )`
+      countSql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv2 
+        WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
+      )`
+      params.push(producto_id)
+      countParams.push(producto_id)
+    }
+
+    // NUEVO: Búsqueda por nombre de producto
+    if (producto_nombre) {
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv3 
+        JOIN productos p3 ON dv3.producto_id = p3.id
+        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+      )`
+      countSql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv3 
+        JOIN productos p3 ON dv3.producto_id = p3.id
+        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+      )`
+      const searchPattern = `%${producto_nombre}%`
+      params.push(searchPattern, searchPattern)
+      countParams.push(searchPattern, searchPattern)
+    }
+
     // Búsqueda general optimizada
     if (search) {
       sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
@@ -157,6 +196,12 @@ export const getVentasPaginadas = async (req, res) => {
       params.push(searchPattern, searchPattern, searchPattern)
       countParams.push(searchPattern, searchPattern, searchPattern)
     }
+
+    // Agrupar por venta para evitar duplicados
+    sql += ` GROUP BY v.id, v.numero_factura, v.fecha, v.subtotal, v.porcentaje_interes,
+             v.monto_interes, v.porcentaje_descuento, v.monto_descuento, v.total,
+             v.anulada, v.fecha_anulacion, v.motivo_anulacion, v.tiene_devoluciones,
+             c.id, c.nombre, c.telefono, u.id, u.nombre, pv.id, pv.nombre, v.tipo_pago`
 
     // Ordenamiento dinámico
     const validSortFields = ["fecha", "numero_factura", "total", "cliente_nombre", "usuario_nombre"]
@@ -211,24 +256,34 @@ export const searchVentasRapido = async (req, res) => {
     }
 
     const sql = `
-      SELECT 
+      SELECT DISTINCT
         v.id,
         v.numero_factura,
         v.fecha,
         v.total,
         c.nombre AS cliente_nombre,
         pv.nombre AS punto_venta_nombre,
-        v.anulada
+        v.anulada,
+        GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      WHERE (v.numero_factura LIKE ? OR c.nombre LIKE ?)
+      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+      LEFT JOIN productos p ON dv.producto_id = p.id
+      WHERE (v.numero_factura LIKE ? OR c.nombre LIKE ? OR p.nombre LIKE ? OR p.codigo LIKE ?)
+      GROUP BY v.id, v.numero_factura, v.fecha, v.total, c.nombre, pv.nombre, v.anulada
       ORDER BY v.fecha DESC
       LIMIT ?
     `
 
     const searchPattern = `%${q}%`
-    const [ventas] = await pool.query(sql, [searchPattern, searchPattern, Number.parseInt(limit)])
+    const [ventas] = await pool.query(sql, [
+      searchPattern,
+      searchPattern,
+      searchPattern,
+      searchPattern,
+      Number.parseInt(limit),
+    ])
 
     res.json(ventas)
   } catch (error) {
@@ -237,7 +292,49 @@ export const searchVentasRapido = async (req, res) => {
   }
 }
 
-// Obtener todas las ventas (mantener para compatibilidad)
+// NUEVA FUNCIÓN: Búsqueda específica de ventas por producto
+export const searchVentasByProducto = async (req, res) => {
+  try {
+    const { producto_query, limit = 20 } = req.query
+
+    if (!producto_query || producto_query.length < 2) {
+      return res.json([])
+    }
+
+    const sql = `
+      SELECT DISTINCT
+        v.id,
+        v.numero_factura,
+        v.fecha,
+        v.total,
+        c.nombre AS cliente_nombre,
+        pv.nombre AS punto_venta_nombre,
+        v.anulada,
+        p.nombre AS producto_nombre,
+        p.codigo AS producto_codigo,
+        dv.cantidad,
+        dv.precio_con_descuento
+      FROM ventas v
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      JOIN detalle_ventas dv ON v.id = dv.venta_id
+      JOIN productos p ON dv.producto_id = p.id
+      WHERE (p.nombre LIKE ? OR p.codigo LIKE ?)
+      ORDER BY v.fecha DESC, p.nombre ASC
+      LIMIT ?
+    `
+
+    const searchPattern = `%${producto_query}%`
+    const [ventas] = await pool.query(sql, [searchPattern, searchPattern, Number.parseInt(limit)])
+
+    res.json(ventas)
+  } catch (error) {
+    console.error("Error en búsqueda de ventas por producto:", error)
+    res.status(500).json({ message: "Error en búsqueda de ventas por producto" })
+  }
+}
+
+// Resto de funciones existentes...
 export const getVentas = async (req, res) => {
   try {
     const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas } = req.query
