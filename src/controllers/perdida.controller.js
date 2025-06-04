@@ -251,20 +251,19 @@ export const createPerdida = async (req, res) => {
         punto_venta_id,
       ])
 
-      // Registrar en log de inventario
       await connection.query(
         `
-        INSERT INTO log_inventario (
-          producto_id, 
-          punto_venta_id, 
-          cantidad, 
-          tipo_movimiento, 
-          referencia_id, 
-          usuario_id, 
-          fecha, 
-          notas
-        ) VALUES (?, ?, ?, 'perdida', ?, ?, NOW(), ?)
-      `,
+         INSERT INTO log_inventario (
+           producto_id, 
+           punto_venta_id, 
+           cantidad, 
+           tipo_movimiento, 
+           referencia_id, 
+           usuario_id, 
+           fecha, 
+           notas
+         ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
+          `,
         [producto_id, punto_venta_id, -cantidad, perdidaId, req.user.id, motivo],
       )
     } else if (tipo === "repuesto" && repuesto_id) {
@@ -328,7 +327,7 @@ export const createPerdida = async (req, res) => {
             usuario_id, 
             fecha, 
             notas
-          ) VALUES (?, ?, ?, 'perdida', ?, ?, NOW(), ?)
+          ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
         `,
           [repuesto_id, punto_venta_id, -cantidad, perdidaId, req.user.id, motivo],
         )
@@ -439,7 +438,7 @@ export const deletePerdida = async (req, res) => {
           usuario_id, 
           fecha, 
           notas
-        ) VALUES (?, ?, ?, 'restauracion_perdida', ?, ?, NOW(), ?)
+        ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
       `,
         [producto_id, punto_venta_id, cantidad, id, req.user.id, "Eliminación de pérdida"],
       )
@@ -464,7 +463,7 @@ export const deletePerdida = async (req, res) => {
             usuario_id, 
             fecha, 
             notas
-          ) VALUES (?, ?, ?, 'restauracion_perdida', ?, ?, NOW(), ?)
+          ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
         `,
           [repuesto_id, punto_venta_id, cantidad, id, req.user.id, "Eliminación de pérdida"],
         )
