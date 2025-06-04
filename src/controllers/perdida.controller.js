@@ -1,5 +1,6 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
+import { formatearFechaParaDB } from "../utils/dateUtils.js"
 
 // Obtener todas las pérdidas
 export const getPerdidas = async (req, res) => {
@@ -223,6 +224,7 @@ export const createPerdida = async (req, res) => {
       }
 
       // Registrar la pérdida de producto
+      const fechaActual = formatearFechaParaDB()
       const [result] = await connection.query(
         `
         INSERT INTO perdidas (
@@ -233,9 +235,9 @@ export const createPerdida = async (req, res) => {
           usuario_id, 
           fecha,
           punto_venta_id
-        ) VALUES (?, NULL, ?, ?, ?, NOW(), ?)
+        ) VALUES (?, NULL, ?, ?, ?, ?, ?)
       `,
-        [producto_id, cantidad, motivo, req.user.id, punto_venta_id],
+        [producto_id, cantidad, motivo, req.user.id, fechaActual, punto_venta_id],
       )
 
       perdidaId = result.insertId
@@ -262,9 +264,9 @@ export const createPerdida = async (req, res) => {
            usuario_id, 
            fecha, 
            notas
-         ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
+         ) VALUES (?, ?, ?, 'ajuste', ?, ?, ?, ?)
           `,
-        [producto_id, punto_venta_id, -cantidad, perdidaId, req.user.id, motivo],
+        [producto_id, punto_venta_id, -cantidad, perdidaId, req.user.id, fechaActual, motivo],
       )
     } else if (tipo === "repuesto" && repuesto_id) {
       // Verificar que el repuesto existe
@@ -286,6 +288,7 @@ export const createPerdida = async (req, res) => {
       }
 
       // Registrar la pérdida de repuesto
+      const fechaActual = formatearFechaParaDB()
       const [result] = await connection.query(
         `
         INSERT INTO perdidas (
@@ -296,9 +299,9 @@ export const createPerdida = async (req, res) => {
           usuario_id, 
           fecha,
           punto_venta_id
-        ) VALUES (NULL, ?, ?, ?, ?, NOW(), ?)
+        ) VALUES (NULL, ?, ?, ?, ?, ?, ?)
       `,
-        [repuesto_id, cantidad, motivo, req.user.id, punto_venta_id],
+        [repuesto_id, cantidad, motivo, req.user.id, fechaActual, punto_venta_id],
       )
 
       perdidaId = result.insertId
@@ -327,9 +330,9 @@ export const createPerdida = async (req, res) => {
             usuario_id, 
             fecha, 
             notas
-          ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
+          ) VALUES (?, ?, ?, 'ajuste', ?, ?, ?, ?)
         `,
-          [repuesto_id, punto_venta_id, -cantidad, perdidaId, req.user.id, motivo],
+          [repuesto_id, punto_venta_id, -cantidad, perdidaId, req.user.id, fechaActual, motivo],
         )
       } catch (error) {
         console.warn("No se pudo registrar en log_inventario_repuestos:", error)
@@ -405,6 +408,7 @@ export const deletePerdida = async (req, res) => {
     await connection.beginTransaction()
 
     const { id } = req.params
+    const fechaActual = formatearFechaParaDB()
 
     // Primero, obtener la información de la pérdida
     const [perdidas] = await connection.query("SELECT * FROM perdidas WHERE id = ?", [id])
@@ -438,9 +442,9 @@ export const deletePerdida = async (req, res) => {
           usuario_id, 
           fecha, 
           notas
-        ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
+        ) VALUES (?, ?, ?, 'ajuste', ?, ?, ?, ?)
       `,
-        [producto_id, punto_venta_id, cantidad, id, req.user.id, "Eliminación de pérdida"],
+        [producto_id, punto_venta_id, cantidad, id, req.user.id, fechaActual, "Eliminación de pérdida"],
       )
     } else if (repuesto_id) {
       // Restaurar el stock del repuesto
@@ -463,9 +467,9 @@ export const deletePerdida = async (req, res) => {
             usuario_id, 
             fecha, 
             notas
-          ) VALUES (?, ?, ?, 'ajuste', ?, ?, NOW(), ?)
+          ) VALUES (?, ?, ?, 'ajuste', ?, ?, ?, ?)
         `,
-          [repuesto_id, punto_venta_id, cantidad, id, req.user.id, "Eliminación de pérdida"],
+          [repuesto_id, punto_venta_id, cantidad, id, req.user.id, fechaActual, "Eliminación de pérdida"],
         )
       } catch (error) {
         console.warn("No se pudo registrar en log_inventario_repuestos:", error)
