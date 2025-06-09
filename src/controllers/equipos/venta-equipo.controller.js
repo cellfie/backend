@@ -562,7 +562,7 @@ export const anularVentaEquipo = async (req, res) => {
             ) VALUES (?, ?, ?, ?, ?, ?)`,
       [
         venta.equipo_id,
-        "anulacion_venta",
+        "ajuste",
         id,
         usuario_id,
         fechaActual,
@@ -633,7 +633,7 @@ export const anularVentaEquipo = async (req, res) => {
             cuentaCorriente.saldo,
             cuentaCorriente.saldo - venta.total_ars,
             id,
-            "anulacion_venta_equipo",
+            "ajuste",
             usuario_id,
             "Anulación de venta de equipo: " + motivo,
           ],
