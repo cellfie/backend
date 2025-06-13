@@ -11,7 +11,11 @@ import {
   getEstadisticasReparaciones,
   cancelarReparacion,
 } from "../controllers/reparacion.controller.js"
-import { getReparacionCompleta, getHistorialAcciones } from "../controllers/historial-acciones.controller.js"
+import { 
+  getReparacionCompleta, 
+  getHistorialAcciones,
+  getReparacionesPorAccion 
+} from "../controllers/historial-acciones.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
 const router = Router()
@@ -61,6 +65,7 @@ const validateCancelacion = [check("motivo").optional().isString().withMessage("
 // Rutas
 router.get("/", verifyToken(["admin", "empleado"]), getReparaciones)
 router.get("/estadisticas", verifyToken(["admin"]), getEstadisticasReparaciones)
+router.get("/por-accion", verifyToken(["admin", "empleado"]), getReparacionesPorAccion)
 router.get("/:id", verifyToken(["admin", "empleado"]), getReparacionById)
 router.post("/", verifyToken(["admin", "empleado"]), validateReparacion, createReparacion)
 router.put("/:id", verifyToken(["admin", "empleado"]), validateUpdateReparacion, updateReparacion)

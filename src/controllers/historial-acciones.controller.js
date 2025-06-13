@@ -137,3 +137,119 @@ ORDER BY ha.fecha ASC`,
     res.status(500).json({ message: "Error al obtener reparación completa" })
   }
 }
+
+// Nueva función para buscar reparaciones por tipo de acción y fecha
+export const getReparacionesPorAccion = async (req, res) => {
+  try {
+    // Parámetros de filtrado
+    const { tipo_accion, fecha_inicio, fecha_fin, cliente_id, punto_venta_id, estado } = req.query
+
+    // Construir la consulta base
+    let query = `
+      SELECT DISTINCT r.id
+      FROM reparaciones r
+      LEFT JOIN historial_acciones_reparacion ha ON r.id = ha.reparacion_id
+      WHERE 1=1
+    `
+    const queryParams = []
+
+    // Aplicar filtros si se proporcionan
+    if (tipo_accion) {
+      query += " AND ha.tipo_accion = ?"
+      queryParams.push(tipo_accion)
+    }
+
+    if (fecha_inicio) {
+      query += " AND DATE(ha.fecha) >= ?"
+      queryParams.push(fecha_inicio)
+    }
+
+    if (fecha_fin) {
+      query += " AND DATE(ha.fecha) <= ?"
+      queryParams.push(fecha_fin)
+    }
+
+    if (cliente_id) {
+      query += " AND r.cliente_id = ?"
+      queryParams.push(cliente_id)
+    }
+
+    if (punto_venta_id) {
+      query += " AND r.punto_venta_id = ?"
+      queryParams.push(punto_venta_id)
+    }
+
+    if (estado) {
+      query += " AND r.estado = ?"
+      queryParams.push(estado)
+    }
+
+    // Obtener los IDs de las reparaciones que cumplen con los filtros
+    const [reparacionIds] = await pool.query(query, queryParams)
+    
+    if (reparacionIds.length === 0) {
+      return res.json([])
+    }
+
+    // Extraer los IDs
+    const ids = reparacionIds.map(r => r.id)
+
+    // Obtener los detalles completos de las reparaciones filtradas
+    const [reparaciones] = await pool.query(
+      `SELECT r.*, 
+             c.nombre AS cliente_nombre,
+             c.telefono AS cliente_telefono,
+             c.dni AS cliente_dni,
+             u.nombre AS usuario_nombre,
+             pv.nombre AS punto_venta_nombre,
+             (SELECT SUM(pr.monto) FROM pagos_reparacion pr WHERE pr.reparacion_id = r.id) AS total_pagado
+      FROM reparaciones r
+      LEFT JOIN clientes c ON r.cliente_id = c.id
+      LEFT JOIN usuarios u ON r.usuario_id = u.id
+      LEFT JOIN puntos_venta pv ON r.punto_venta_id = pv.id
+      WHERE r.id IN (?)
+      ORDER BY r.fecha_ingreso DESC`,
+      [ids]
+    )
+
+    // Para cada reparación, obtener el equipo y los detalles
+    for (const reparacion of reparaciones) {
+      // Obtener el equipo
+      const [equipos] = await pool.query(
+        `SELECT * FROM equipos_reparacion 
+        WHERE reparacion_id = ?`,
+        [reparacion.id],
+      )
+
+      reparacion.equipo = equipos.length > 0 ? equipos[0] : null
+
+      // Obtener los detalles de la reparación
+      const [detalles] = await pool.query(
+        `SELECT * FROM detalles_reparacion 
+        WHERE reparacion_id = ?`,
+        [reparacion.id],
+      )
+
+      reparacion.detalles = detalles
+
+      // Obtener los pagos de la reparación
+      const [pagos] = await pool.query(
+        `SELECT * FROM pagos_reparacion 
+        WHERE reparacion_id = ?`,
+        [reparacion.id],
+      )
+
+      reparacion.pagos = pagos
+
+      // Calcular el saldo pendiente
+      const totalReparacion = Number.parseFloat(reparacion.total) || 0
+      const totalPagado = Number.parseFloat(reparacion.total_pagado) || 0
+      reparacion.saldo_pendiente = totalReparacion - totalPagado
+    }
+
+    res.json(reparaciones)
+  } catch (error) {
+    console.error("Error al obtener reparaciones por acción:", error)
+    res.status(500).json({ message: "Error al obtener reparaciones por acción" })
+  }
+}
