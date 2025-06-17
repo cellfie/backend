@@ -102,4 +102,4 @@ router.put("/:id/anular", verifyToken(["admin"]), validateAnulacion, anularVenta
 // Nueva ruta para registrar pagos adicionales a una venta de equipo
 router.post("/:id/pagos", verifyToken(["admin", "empleado"]), validatePagoAdicional, registrarPagoAdicionalVentaEquipo);
 
-export default router
+export default router 
