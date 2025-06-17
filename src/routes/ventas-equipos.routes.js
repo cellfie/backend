@@ -14,7 +14,7 @@ const router = Router()
 // Middleware para verificar token en todas las rutas
 router.use(verifyToken())
 
-// ✅ CORRECCIÓN: Validaciones actualizadas para crear venta de equipo
+// Validaciones para crear venta de equipo
 const validateVentaEquipo = [
   check("cliente_id").isNumeric().withMessage("ID de cliente inválido"),
   check("punto_venta_id").isNumeric().withMessage("ID de punto de venta inválido"),
@@ -28,7 +28,7 @@ const validateVentaEquipo = [
 // Validaciones para anular venta
 const validateAnulacion = [check("motivo").notEmpty().withMessage("El motivo de anulación es obligatorio")]
 
-// ✅ CORRECCIÓN: Validaciones para pago adicional
+// Validaciones para pago adicional
 const validatePagoAdicional = [
   check("monto_usd").optional().isFloat({ min: 0 }).withMessage("Monto USD inválido"),
   check("monto_ars").optional().isFloat({ min: 0 }).withMessage("Monto ARS inválido"),

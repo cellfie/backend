@@ -189,6 +189,14 @@ export const createVentaEquipo = async (req, res) => {
     marcar_como_incompleta = false,
   } = req.body
 
+  console.log("Datos recibidos en createVentaEquipo:", {
+    cliente_id,
+    punto_venta_id,
+    equipo_id,
+    pagos,
+    marcar_como_incompleta,
+  })
+
   // Validación del usuario
   if (!req.user || !req.user.id) {
     console.error("Usuario no autenticado:", req.user)
@@ -216,12 +224,27 @@ export const createVentaEquipo = async (req, res) => {
     }
   }
 
-  // ✅ CORRECCIÓN: Validar que los pagos tengan tipo_pago válido
+  // ✅ CORRECCIÓN: Validar que los pagos tengan tipo_pago válido y obtener tipos válidos de la BD
   if (pagos && pagos.length > 0) {
+    // Obtener tipos de pago válidos de la base de datos
+    const [tiposPagoValidos] = await pool.query("SELECT nombre FROM tipos_pago WHERE activo = 1")
+    const nombresValidos = tiposPagoValidos.map((tp) => tp.nombre.toLowerCase())
+
+    console.log("Tipos de pago válidos en BD:", nombresValidos)
+    console.log("Pagos recibidos:", pagos)
+
     for (const pago of pagos) {
       if (!pago.tipo_pago || pago.tipo_pago.trim() === "") {
         return res.status(400).json({
           message: "Todos los pagos deben tener un tipo de pago válido",
+        })
+      }
+
+      // Verificar que el tipo de pago existe en la base de datos
+      const tipoPagoNormalizado = pago.tipo_pago.toLowerCase().trim()
+      if (!nombresValidos.includes(tipoPagoNormalizado)) {
+        return res.status(400).json({
+          message: `Tipo de pago "${pago.tipo_pago}" no es válido. Tipos válidos: ${tiposPagoValidos.map((tp) => tp.nombre).join(", ")}`,
         })
       }
     }
@@ -327,14 +350,11 @@ export const createVentaEquipo = async (req, res) => {
     } else if (marcar_como_incompleta) {
       // Si se marca como incompleta sin pagos
       tipoPagoPrincipal = "Pendiente"
-    } else {
-      // Fallback por seguridad
-      tipoPagoPrincipal = "Efectivo"
     }
 
-    // Asegurar que tipoPagoPrincipal no sea null o vacío
+    // ✅ CORRECCIÓN: Asegurar que tipoPagoPrincipal sea válido
     if (!tipoPagoPrincipal || tipoPagoPrincipal.trim() === "") {
-      tipoPagoPrincipal = "Efectivo"
+      tipoPagoPrincipal = "Pendiente"
     }
 
     console.log("Tipo de pago principal determinado:", tipoPagoPrincipal)
@@ -352,7 +372,7 @@ export const createVentaEquipo = async (req, res) => {
         clienteId,
         usuario_id,
         punto_venta_id,
-        tipoPagoPrincipal, // Este ya no puede ser null
+        tipoPagoPrincipal,
         equipo_id,
         precioUSD,
         precioARS,
@@ -378,8 +398,8 @@ export const createVentaEquipo = async (req, res) => {
     // Insertar pagos en pagos_ventas_equipos
     if (pagos && pagos.length > 0) {
       for (const pago of pagos) {
-        // ✅ CORRECCIÓN: Asegurar que tipo_pago no sea null
-        const tipoPago = pago.tipo_pago && pago.tipo_pago.trim() !== "" ? pago.tipo_pago.trim() : "Efectivo"
+        // ✅ CORRECCIÓN: Normalizar el tipo de pago para que coincida con la BD
+        const tipoPagoNormalizado = pago.tipo_pago.trim()
 
         await connection.query(
           `INSERT INTO pagos_ventas_equipos (
@@ -390,7 +410,7 @@ export const createVentaEquipo = async (req, res) => {
             ventaId,
             pago.monto_usd || 0,
             pago.monto_ars || 0,
-            tipoPago, // Ahora garantizado que no es null
+            tipoPagoNormalizado,
             fechaActual,
             usuario_id,
             punto_venta_id,
@@ -399,7 +419,7 @@ export const createVentaEquipo = async (req, res) => {
         )
 
         // Lógica de Cuenta Corriente si aplica para este pago
-        if (tipoPago.toLowerCase() === "cuenta corriente" || tipoPago.toLowerCase() === "cuenta") {
+        if (tipoPagoNormalizado.toLowerCase() === "cuenta corriente") {
           if (!clienteId) {
             await connection.rollback()
             return res.status(400).json({ message: "Se requiere un cliente para pagos con cuenta corriente" })
@@ -599,7 +619,7 @@ export const anularVentaEquipo = async (req, res) => {
       )
 
       // Revertir movimiento de cuenta corriente si aplica
-      if (pago.tipo_pago.toLowerCase() === "cuenta corriente" || pago.tipo_pago.toLowerCase() === "cuenta") {
+      if (pago.tipo_pago.toLowerCase() === "cuenta corriente") {
         if (venta.cliente_id) {
           const [cuentasCorrientes] = await connection.query(
             "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
@@ -744,7 +764,7 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
       return res.status(400).json({ message: "La venta ya está completamente pagada." })
     }
 
-    // ✅ CORRECCIÓN: Asegurar que tipo_pago no sea null
+    // Asegurar que tipo_pago no sea null
     const tipoPagoLimpio = tipo_pago && tipo_pago.trim() !== "" ? tipo_pago.trim() : "Efectivo"
 
     // Insertar el nuevo pago
@@ -757,7 +777,7 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
         venta_equipo_id,
         monto_usd || 0,
         monto_ars || 0,
-        tipoPagoLimpio, // Ahora garantizado que no es null
+        tipoPagoLimpio,
         fechaActual,
         usuario_id,
         punto_venta_id_pago,
@@ -783,7 +803,7 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
       nuevoEstadoPago = "pendiente"
     }
 
-    // ✅ CORRECCIÓN: Actualizar tipo_pago en la venta principal si es necesario
+    // Actualizar tipo_pago en la venta principal si es necesario
     let nuevoTipoPagoVenta = venta.tipo_pago
 
     // Obtener todos los pagos de esta venta (incluyendo el nuevo)
@@ -836,7 +856,7 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
     )
 
     // Lógica de Cuenta Corriente si aplica para este pago
-    if (tipoPagoLimpio.toLowerCase() === "cuenta corriente" || tipoPagoLimpio.toLowerCase() === "cuenta") {
+    if (tipoPagoLimpio.toLowerCase() === "cuenta corriente") {
       if (!venta.cliente_id) {
         await connection.rollback()
         return res
