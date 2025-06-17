@@ -168,9 +168,14 @@ export const getVentaEquipoById = async (req, res) => {
 
 // Crear una nueva venta de equipo
 export const createVentaEquipo = async (req, res) => {
+  // ✅ CORRECCIÓN: Validar errores de validación
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() })
+    console.error("Errores de validación:", errors.array())
+    return res.status(400).json({
+      message: "Errores de validación",
+      errors: errors.array(),
+    })
   }
 
   const {
@@ -185,11 +190,25 @@ export const createVentaEquipo = async (req, res) => {
     marcar_como_incompleta = false,
   } = req.body
 
+  // ✅ CORRECCIÓN: Validación mejorada del usuario
   if (!req.user || !req.user.id) {
+    console.error("Usuario no autenticado:", req.user)
     return res.status(401).json({ message: "Usuario no autenticado" })
   }
   const usuario_id = req.user.id
 
+  // ✅ CORRECCIÓN: Validación mejorada de campos requeridos
+  if (!cliente_id) {
+    return res.status(400).json({ message: "El cliente es obligatorio" })
+  }
+  if (!punto_venta_id) {
+    return res.status(400).json({ message: "El punto de venta es obligatorio" })
+  }
+  if (!equipo_id) {
+    return res.status(400).json({ message: "El equipo es obligatorio" })
+  }
+
+  // ✅ CORRECCIÓN: Validación mejorada de pagos
   if (!pagos || !Array.isArray(pagos) || pagos.length === 0) {
     if (!marcar_como_incompleta) {
       return res
@@ -203,12 +222,14 @@ export const createVentaEquipo = async (req, res) => {
     await connection.beginTransaction()
     const fechaActual = formatearFechaParaDB()
 
+    // Validar punto de venta
     const [puntosVenta] = await connection.query("SELECT * FROM puntos_venta WHERE id = ?", [punto_venta_id])
     if (puntosVenta.length === 0) {
       await connection.rollback()
       return res.status(404).json({ message: "Punto de venta no encontrado" })
     }
 
+    // Validar cliente
     let clienteId = null
     if (cliente_id) {
       const [clientes] = await connection.query("SELECT * FROM clientes WHERE id = ?", [cliente_id])
@@ -219,6 +240,7 @@ export const createVentaEquipo = async (req, res) => {
       clienteId = cliente_id
     }
 
+    // Validar equipo
     const [equipos] = await connection.query(
       "SELECT * FROM equipos WHERE id = ? AND (punto_venta_id = ? OR punto_venta_id IS NULL) AND vendido = 0",
       [equipo_id, punto_venta_id],
@@ -231,9 +253,11 @@ export const createVentaEquipo = async (req, res) => {
     }
     const equipo = equipos[0]
 
+    // Obtener tipo de cambio
     const [tcRows] = await connection.query("SELECT valor FROM tipo_cambio ORDER BY fecha DESC LIMIT 1")
     const tipoCambioActual = tcRows.length > 0 ? Number.parseFloat(tcRows[0].valor) : equipo.tipo_cambio
 
+    // Cálculos
     const precioUSD = equipo.precio
     const precioARS = precioUSD * tipoCambioActual
     let descuentoPlanCanjeUSD = 0
@@ -257,6 +281,7 @@ export const createVentaEquipo = async (req, res) => {
       })
     }
 
+    // Determinar estado de pago
     let estadoPago
     const saldoPendienteUSD = totalVentaUSD - totalPagadoUSD
     const saldoPendienteARS = totalVentaARS - totalPagadoARS
@@ -288,6 +313,7 @@ export const createVentaEquipo = async (req, res) => {
       }
     }
 
+    // Insertar venta
     const [resultVenta] = await connection.query(
       `INSERT INTO ventas_equipos (
           numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago, equipo_id,
@@ -408,8 +434,10 @@ export const createVentaEquipo = async (req, res) => {
       [ventaId, estadoPago, totalPagadoUSD, totalPagadoARS, tipoPagoPrincipal, usuario_id, "Creación de venta"],
     )
 
+    // Marcar equipo como vendido
     await connection.query("UPDATE equipos SET vendido = 1, venta_id = ? WHERE id = ?", [ventaId, equipo_id])
 
+    // Procesar plan canje si existe
     let equipoCanjeId = null
     if (plan_canje) {
       await connection.query(
@@ -471,6 +499,7 @@ export const createVentaEquipo = async (req, res) => {
       )
     }
 
+    // Log del equipo vendido
     await connection.query(
       `INSERT INTO log_equipos (equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas) 
        VALUES (?, ?, ?, ?, ?, ?)`,
