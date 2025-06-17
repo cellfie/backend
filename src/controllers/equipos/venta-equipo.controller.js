@@ -168,7 +168,6 @@ export const getVentaEquipoById = async (req, res) => {
 
 // Crear una nueva venta de equipo
 export const createVentaEquipo = async (req, res) => {
-  // ✅ CORRECCIÓN: Validar errores de validación
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
     console.error("Errores de validación:", errors.array())
@@ -190,14 +189,14 @@ export const createVentaEquipo = async (req, res) => {
     marcar_como_incompleta = false,
   } = req.body
 
-  // ✅ CORRECCIÓN: Validación mejorada del usuario
+  // Validación del usuario
   if (!req.user || !req.user.id) {
     console.error("Usuario no autenticado:", req.user)
     return res.status(401).json({ message: "Usuario no autenticado" })
   }
   const usuario_id = req.user.id
 
-  // ✅ CORRECCIÓN: Validación mejorada de campos requeridos
+  // Validación de campos requeridos
   if (!cliente_id) {
     return res.status(400).json({ message: "El cliente es obligatorio" })
   }
@@ -208,12 +207,23 @@ export const createVentaEquipo = async (req, res) => {
     return res.status(400).json({ message: "El equipo es obligatorio" })
   }
 
-  // ✅ CORRECCIÓN: Validación mejorada de pagos
+  // Validación de pagos
   if (!pagos || !Array.isArray(pagos) || pagos.length === 0) {
     if (!marcar_como_incompleta) {
       return res
         .status(400)
         .json({ message: "Debe proporcionar al menos un método de pago o marcar la venta como incompleta." })
+    }
+  }
+
+  // ✅ CORRECCIÓN: Validar que los pagos tengan tipo_pago válido
+  if (pagos && pagos.length > 0) {
+    for (const pago of pagos) {
+      if (!pago.tipo_pago || pago.tipo_pago.trim() === "") {
+        return res.status(400).json({
+          message: "Todos los pagos deben tener un tipo de pago válido",
+        })
+      }
     }
   }
 
@@ -303,15 +313,31 @@ export const createVentaEquipo = async (req, res) => {
 
     const numeroFactura = await generarNumeroFactura()
 
-    // ✅ CORRECCIÓN: Determinar correctamente el tipo de pago principal
-    let tipoPagoPrincipal = "Pendiente"
+    // ✅ CORRECCIÓN: Lógica mejorada para determinar el tipo de pago principal
+    let tipoPagoPrincipal = "Pendiente" // Valor por defecto
+
     if (pagos && pagos.length > 0) {
       if (pagos.length === 1) {
-        tipoPagoPrincipal = pagos[0].tipo_pago || "Efectivo"
+        // Si hay un solo pago, usar ese método específico
+        tipoPagoPrincipal = pagos[0].tipo_pago.trim()
       } else {
-        tipoPagoPrincipal = "Multiple"
+        // Si hay múltiples pagos, usar "Varios"
+        tipoPagoPrincipal = "Varios"
       }
+    } else if (marcar_como_incompleta) {
+      // Si se marca como incompleta sin pagos
+      tipoPagoPrincipal = "Pendiente"
+    } else {
+      // Fallback por seguridad
+      tipoPagoPrincipal = "Efectivo"
     }
+
+    // Asegurar que tipoPagoPrincipal no sea null o vacío
+    if (!tipoPagoPrincipal || tipoPagoPrincipal.trim() === "") {
+      tipoPagoPrincipal = "Efectivo"
+    }
+
+    console.log("Tipo de pago principal determinado:", tipoPagoPrincipal)
 
     // Insertar venta
     const [resultVenta] = await connection.query(
@@ -326,7 +352,7 @@ export const createVentaEquipo = async (req, res) => {
         clienteId,
         usuario_id,
         punto_venta_id,
-        tipoPagoPrincipal,
+        tipoPagoPrincipal, // Este ya no puede ser null
         equipo_id,
         precioUSD,
         precioARS,
@@ -352,6 +378,9 @@ export const createVentaEquipo = async (req, res) => {
     // Insertar pagos en pagos_ventas_equipos
     if (pagos && pagos.length > 0) {
       for (const pago of pagos) {
+        // ✅ CORRECCIÓN: Asegurar que tipo_pago no sea null
+        const tipoPago = pago.tipo_pago && pago.tipo_pago.trim() !== "" ? pago.tipo_pago.trim() : "Efectivo"
+
         await connection.query(
           `INSERT INTO pagos_ventas_equipos (
                 venta_equipo_id, monto_usd, monto_ars, tipo_pago, fecha_pago, 
@@ -359,18 +388,18 @@ export const createVentaEquipo = async (req, res) => {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             ventaId,
-            pago.monto_usd,
-            pago.monto_ars,
-            pago.tipo_pago,
+            pago.monto_usd || 0,
+            pago.monto_ars || 0,
+            tipoPago, // Ahora garantizado que no es null
             fechaActual,
             usuario_id,
             punto_venta_id,
-            pago.notas_pago,
+            pago.notas_pago || "",
           ],
         )
 
         // Lógica de Cuenta Corriente si aplica para este pago
-        if (pago.tipo_pago.toLowerCase() === "cuenta corriente" || pago.tipo_pago.toLowerCase() === "cuenta") {
+        if (tipoPago.toLowerCase() === "cuenta corriente" || tipoPago.toLowerCase() === "cuenta") {
           if (!clienteId) {
             await connection.rollback()
             return res.status(400).json({ message: "Se requiere un cliente para pagos con cuenta corriente" })
@@ -385,7 +414,7 @@ export const createVentaEquipo = async (req, res) => {
           if (cuentasCorrientes.length === 0) {
             const [resultCuenta] = await connection.query(
               "INSERT INTO cuentas_corrientes (cliente_id, saldo) VALUES (?, ?)",
-              [clienteId, pago.monto_ars],
+              [clienteId, pago.monto_ars || 0],
             )
             cuentaCorrienteId = resultCuenta.insertId
           } else {
@@ -393,7 +422,7 @@ export const createVentaEquipo = async (req, res) => {
             saldoAnteriorCC = Number(cuentasCorrientes[0].saldo)
             if (
               cuentasCorrientes[0].limite_credito > 0 &&
-              saldoAnteriorCC + Number(pago.monto_ars) > cuentasCorrientes[0].limite_credito
+              saldoAnteriorCC + Number(pago.monto_ars || 0) > cuentasCorrientes[0].limite_credito
             ) {
               await connection.rollback()
               return res.status(400).json({
@@ -402,7 +431,7 @@ export const createVentaEquipo = async (req, res) => {
             }
             await connection.query(
               "UPDATE cuentas_corrientes SET saldo = saldo + ?, fecha_ultimo_movimiento = ? WHERE id = ?",
-              [pago.monto_ars, fechaActual, cuentaCorrienteId],
+              [pago.monto_ars || 0, fechaActual, cuentaCorrienteId],
             )
           }
           await connection.query(
@@ -413,9 +442,9 @@ export const createVentaEquipo = async (req, res) => {
             [
               cuentaCorrienteId,
               "cargo",
-              pago.monto_ars,
+              pago.monto_ars || 0,
               saldoAnteriorCC,
-              saldoAnteriorCC + Number(pago.monto_ars),
+              saldoAnteriorCC + Number(pago.monto_ars || 0),
               ventaId,
               "venta_equipo",
               usuario_id,
@@ -513,6 +542,7 @@ export const createVentaEquipo = async (req, res) => {
       total_usd: totalVentaUSD,
       total_ars: totalVentaARS,
       estado_pago: estadoPago,
+      tipo_pago: tipoPagoPrincipal,
       equipo_canje_id: equipoCanjeId,
       message: "Venta de equipo registrada exitosamente",
     })
@@ -714,6 +744,9 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
       return res.status(400).json({ message: "La venta ya está completamente pagada." })
     }
 
+    // ✅ CORRECCIÓN: Asegurar que tipo_pago no sea null
+    const tipoPagoLimpio = tipo_pago && tipo_pago.trim() !== "" ? tipo_pago.trim() : "Efectivo"
+
     // Insertar el nuevo pago
     const [resultPago] = await connection.query(
       `INSERT INTO pagos_ventas_equipos (
@@ -724,11 +757,11 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
         venta_equipo_id,
         monto_usd || 0,
         monto_ars || 0,
-        tipo_pago,
+        tipoPagoLimpio, // Ahora garantizado que no es null
         fechaActual,
         usuario_id,
         punto_venta_id_pago,
-        notas_pago,
+        notas_pago || "",
       ],
     )
     const pagoId = resultPago.insertId
@@ -750,11 +783,28 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
       nuevoEstadoPago = "pendiente"
     }
 
+    // ✅ CORRECCIÓN: Actualizar tipo_pago en la venta principal si es necesario
+    let nuevoTipoPagoVenta = venta.tipo_pago
+
+    // Obtener todos los pagos de esta venta (incluyendo el nuevo)
+    const [todosPagos] = await connection.query(
+      "SELECT tipo_pago FROM pagos_ventas_equipos WHERE venta_equipo_id = ? AND anulado = 0",
+      [venta_equipo_id],
+    )
+
+    if (todosPagos.length === 1) {
+      // Si solo hay un pago, usar ese tipo
+      nuevoTipoPagoVenta = tipoPagoLimpio
+    } else if (todosPagos.length > 1) {
+      // Si hay múltiples pagos, usar "Varios"
+      nuevoTipoPagoVenta = "Varios"
+    }
+
     await connection.query(
       `UPDATE ventas_equipos SET 
           total_pagado_usd = ?, total_pagado_ars = ?, 
           saldo_pendiente_usd = ?, saldo_pendiente_ars = ?,
-          estado_pago = ?, fecha_ultimo_pago = ?
+          estado_pago = ?, fecha_ultimo_pago = ?, tipo_pago = ?
        WHERE id = ?`,
       [
         nuevoTotalPagadoUSD,
@@ -763,6 +813,7 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
         nuevoSaldoPendienteARS,
         nuevoEstadoPago,
         fechaActual,
+        nuevoTipoPagoVenta,
         venta_equipo_id,
       ],
     )
@@ -778,14 +829,14 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
         nuevoEstadoPago,
         monto_usd || 0,
         monto_ars || 0,
-        tipo_pago,
+        tipoPagoLimpio,
         usuario_id,
         notas_pago || `Pago adicional registrado`,
       ],
     )
 
     // Lógica de Cuenta Corriente si aplica para este pago
-    if (tipo_pago.toLowerCase() === "cuenta corriente" || tipo_pago.toLowerCase() === "cuenta") {
+    if (tipoPagoLimpio.toLowerCase() === "cuenta corriente" || tipoPagoLimpio.toLowerCase() === "cuenta") {
       if (!venta.cliente_id) {
         await connection.rollback()
         return res
@@ -846,6 +897,7 @@ export const registrarPagoAdicionalVentaEquipo = async (req, res) => {
       pago_id: pagoId,
       venta_equipo_id,
       nuevo_estado_pago: nuevoEstadoPago,
+      nuevo_tipo_pago: nuevoTipoPagoVenta,
       message: "Pago adicional registrado exitosamente.",
     })
   } catch (error) {
