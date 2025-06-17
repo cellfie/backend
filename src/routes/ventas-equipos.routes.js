@@ -6,6 +6,7 @@ import {
   createVentaEquipo,
   anularVentaEquipo,
   registrarPagoAdicionalVentaEquipo,
+  getTiposPago,
 } from "../controllers/equipos/venta-equipo.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
@@ -36,13 +37,14 @@ const validatePagoAdicional = [
   check("punto_venta_id_pago").isNumeric().withMessage("ID de punto de venta para pago inválido"),
 ]
 
-// Rutas
+// ✅ NUEVA RUTA: Obtener tipos de pago
+router.get("/tipos-pago", verifyToken(["admin", "empleado"]), getTiposPago)
+
+// Rutas existentes
 router.get("/", verifyToken(["admin", "empleado"]), getVentasEquipos)
 router.get("/:id", verifyToken(["admin", "empleado"]), getVentaEquipoById)
 router.post("/", verifyToken(["admin", "empleado"]), validateVentaEquipo, createVentaEquipo)
 router.put("/:id/anular", verifyToken(["admin"]), validateAnulacion, anularVentaEquipo)
-
-// Ruta para registrar pagos adicionales a una venta de equipo
 router.post("/:id/pagos", verifyToken(["admin", "empleado"]), validatePagoAdicional, registrarPagoAdicionalVentaEquipo)
 
 export default router
