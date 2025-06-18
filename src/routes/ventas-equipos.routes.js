@@ -4,7 +4,7 @@ import {
   getVentasEquipos,
   getVentaEquipoById,
   createVentaEquipo,
-  anularVentaEquipo
+  anularVentaEquipo,
 } from "../controllers/equipos/venta-equipo.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
@@ -13,11 +13,18 @@ const router = Router()
 // Middleware para verificar token en todas las rutas
 router.use(verifyToken())
 
-// Validaciones para crear venta de equipo
+// MODIFICACIÓN: Se actualizan las validaciones para aceptar múltiples pagos.
 const validateVentaEquipo = [
   check("punto_venta_id").isNumeric().withMessage("ID de punto de venta inválido"),
-  check("tipo_pago").isString().withMessage("Tipo de pago inválido"),
   check("equipo_id").isNumeric().withMessage("ID de equipo inválido"),
+  check("pagos").isArray({ min: 1 }).withMessage("Se requiere al menos un método de pago."),
+  check("pagos.*.monto")
+    .isNumeric()
+    .withMessage("El monto de cada pago debe ser un número.")
+    .toFloat()
+    .isFloat({ gt: 0 })
+    .withMessage("El monto de cada pago debe ser mayor a cero."),
+  check("pagos.*.tipo_pago").isString().notEmpty().withMessage("El tipo de pago es obligatorio para cada pago."),
 ]
 
 // Validaciones para anular venta
