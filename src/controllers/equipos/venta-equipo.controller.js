@@ -1,10 +1,9 @@
 import pool from "../../db.js"
 import { validationResult } from "express-validator"
-// Ya no usaremos registrarPagoInterno directamente aquí para el pago principal de la venta de equipo.
-// import { registrarPagoInterno } from "../pago.controller.js"
+import { registrarPagoInterno } from "../pago.controller.js"
 import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
-// Generar número de factura único para ventas de equipos (sin cambios)
+// Generar número de factura único para ventas de equipos
 const generarNumeroFactura = async () => {
   const fecha = new Date()
   const año = fecha.getFullYear().toString().substr(-2)
@@ -12,6 +11,7 @@ const generarNumeroFactura = async () => {
   const dia = fecha.getDate().toString().padStart(2, "0")
   const prefijo = `E${año}${mes}${dia}`
 
+  // Obtener el último número de factura con este prefijo
   const [ultimaFactura] = await pool.query(
     "SELECT numero_factura FROM ventas_equipos WHERE numero_factura LIKE ? ORDER BY id DESC LIMIT 1",
     [`${prefijo}%`],
@@ -26,7 +26,7 @@ const generarNumeroFactura = async () => {
   return `${prefijo}-${numero.toString().padStart(4, "0")}`
 }
 
-// Obtener todas las ventas de equipos (modificado para indicar múltiples pagos)
+// Obtener todas las ventas de equipos
 export const getVentasEquipos = async (req, res) => {
   try {
     const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas } = req.query
@@ -48,12 +48,6 @@ export const getVentasEquipos = async (req, res) => {
                 v.anulada,
                 v.fecha_anulacion,
                 v.motivo_anulacion,
-                v.multiples_pagos, -- Nueva columna
-                v.estado_pago,
-                v.total_pagado_usd,
-                v.total_pagado_ars,
-                v.saldo_pendiente_usd,
-                v.saldo_pendiente_ars,
                 c.id AS cliente_id,
                 c.nombre AS cliente_nombre,
                 c.telefono AS cliente_telefono,
@@ -61,11 +55,11 @@ export const getVentasEquipos = async (req, res) => {
                 u.nombre AS usuario_nombre,
                 pv.id AS punto_venta_id,
                 pv.nombre AS punto_venta_nombre,
+                v.tipo_pago,
                 e.id AS equipo_id,
                 e.marca,
                 e.modelo,
                 e.imei
-                -- Ya no traemos v.tipo_pago directamente
             FROM ventas_equipos v
             LEFT JOIN clientes c ON v.cliente_id = c.id
             JOIN usuarios u ON v.usuario_id = u.id
@@ -73,41 +67,43 @@ export const getVentasEquipos = async (req, res) => {
             JOIN equipos e ON v.equipo_id = e.id
             WHERE 1=1
         `
-    // ... (resto de los filtros sin cambios)
+
     const params = []
 
+    // Filtrar por fecha de inicio
     if (fecha_inicio) {
       sql += ` AND DATE(v.fecha) >= ?`
       params.push(fecha_inicio)
     }
 
+    // Filtrar por fecha de fin
     if (fecha_fin) {
       sql += ` AND DATE(v.fecha) <= ?`
       params.push(fecha_fin)
     }
 
+    // Filtrar por cliente
     if (cliente_id) {
       sql += ` AND v.cliente_id = ?`
       params.push(cliente_id)
     }
 
+    // Filtrar por punto de venta
     if (punto_venta_id) {
       sql += ` AND v.punto_venta_id = ?`
       params.push(punto_venta_id)
     }
 
+    // Filtrar por estado de anulación
     if (anuladas !== undefined) {
       sql += ` AND v.anulada = ?`
       params.push(anuladas === "true" ? 1 : 0)
     }
 
+    // Ordenar por fecha descendente
     sql += ` ORDER BY v.fecha DESC`
 
     const [ventas] = await pool.query(sql, params)
-
-    // Para cada venta, podríamos obtener los tipos de pago si es necesario para la lista
-    // o simplemente confiar en la bandera `multiples_pagos`.
-    // Por simplicidad, por ahora solo devolvemos la bandera.
 
     res.json(ventas)
   } catch (error) {
@@ -116,11 +112,12 @@ export const getVentasEquipos = async (req, res) => {
   }
 }
 
-// Obtener una venta de equipo por ID (modificado para incluir los múltiples pagos)
+// Obtener una venta de equipo por ID
 export const getVentaEquipoById = async (req, res) => {
   try {
     const { id } = req.params
 
+    // Obtener la información de la venta
     const [ventas] = await pool.query(
       `
             SELECT 
@@ -139,13 +136,6 @@ export const getVentaEquipoById = async (req, res) => {
                 v.anulada,
                 v.fecha_anulacion,
                 v.motivo_anulacion,
-                v.multiples_pagos, -- Nueva columna
-                v.estado_pago,
-                v.total_pagado_usd,
-                v.total_pagado_ars,
-                v.saldo_pendiente_usd,
-                v.saldo_pendiente_ars,
-                v.notas,
                 c.id AS cliente_id,
                 c.nombre AS cliente_nombre,
                 c.telefono AS cliente_telefono,
@@ -153,17 +143,17 @@ export const getVentaEquipoById = async (req, res) => {
                 u.nombre AS usuario_nombre,
                 pv.id AS punto_venta_id,
                 pv.nombre AS punto_venta_nombre,
+                v.tipo_pago,
                 e.id AS equipo_id,
                 e.marca,
                 e.modelo,
                 e.memoria,
                 e.color,
                 e.bateria,
-                e.descripcion AS equipo_descripcion,
+                e.descripcion,
                 e.imei,
                 e.tipo_cambio AS equipo_tipo_cambio,
                 e.tipo_cambio_original AS equipo_tipo_cambio_original
-                -- Ya no traemos v.tipo_pago directamente
             FROM ventas_equipos v
             LEFT JOIN clientes c ON v.cliente_id = c.id
             JOIN usuarios u ON v.usuario_id = u.id
@@ -178,37 +168,45 @@ export const getVentaEquipoById = async (req, res) => {
       return res.status(404).json({ message: "Venta de equipo no encontrada" })
     }
 
-    const venta = ventas[0]
-
-    // Obtener los pagos asociados desde la nueva tabla `venta_equipo_pagos`
-    const [pagosDetalle] = await pool.query(
-      `SELECT id, tipo_pago, monto_usd, monto_ars, tipo_cambio_pago, descripcion, fecha_pago 
-       FROM venta_equipo_pagos 
-       WHERE venta_equipo_id = ?`,
+    // Obtener información del plan canje si existe
+    const [planCanje] = await pool.query(
+      `
+            SELECT * FROM plan_canje
+            WHERE venta_equipo_id = ?
+        `,
       [id],
     )
 
-    // Obtener información del plan canje si existe (sin cambios)
-    const [planCanje] = await pool.query(
-      `SELECT * FROM plan_canje WHERE venta_equipo_id = ?`,
+    // Obtener los pagos asociados a esta venta
+    const [pagos] = await pool.query(
+      `
+            SELECT 
+                p.id,
+                p.monto,
+                p.fecha,
+                p.anulado,
+                p.tipo_pago
+            FROM pagos p
+            WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta_equipo' AND p.anulado = 0
+        `,
       [id],
     )
 
     // Construir la respuesta
-    const ventaCompleta = {
-      ...venta,
-      pagos: pagosDetalle, // Reemplazar los pagos anteriores con los de la nueva tabla
+    const venta = {
+      ...ventas[0],
       plan_canje: planCanje.length > 0 ? planCanje[0] : null,
+      pagos,
     }
 
-    res.json(ventaCompleta)
+    res.json(venta)
   } catch (error) {
     console.error("Error al obtener venta de equipo:", error)
     res.status(500).json({ message: "Error al obtener venta de equipo" })
   }
 }
 
-// Crear una nueva venta de equipo (modificado para manejar múltiples pagos)
+// Crear una nueva venta de equipo
 export const createVentaEquipo = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -218,37 +216,44 @@ export const createVentaEquipo = async (req, res) => {
   const {
     cliente_id,
     punto_venta_id,
+    tipo_pago,
     equipo_id,
     porcentaje_interes = 0,
     porcentaje_descuento = 0,
     plan_canje = null,
     notas,
-    // tipo_cambio, // El tipo de cambio general de la venta se tomará del sistema o del equipo
-    pagos, // Nuevo: Array de objetos de pago
+    tipo_cambio,
   } = req.body
 
+  // Verificar si el usuario está autenticado y tiene un ID
   if (!req.user || !req.user.id) {
     return res.status(401).json({ message: "Usuario no autenticado o ID de usuario no disponible" })
   }
+
   const usuario_id = req.user.id
 
-  // Validar que se proporcionen pagos
-  if (!pagos || !Array.isArray(pagos) || pagos.length === 0) {
-    return res.status(400).json({ message: "Se debe especificar al menos un método de pago." })
-  }
-
   const connection = await pool.getConnection()
+
   try {
     await connection.beginTransaction()
+
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
-    // --- Validaciones (similares a antes) ---
+    // Verificar que el punto de venta existe
     const [puntosVenta] = await connection.query("SELECT * FROM puntos_venta WHERE id = ?", [punto_venta_id])
     if (puntosVenta.length === 0) {
       await connection.rollback()
       return res.status(404).json({ message: "Punto de venta no encontrado" })
     }
 
+    // Verificar que el tipo de pago es válido
+    if (!tipo_pago) {
+      await connection.rollback()
+      return res.status(400).json({ message: "Tipo de pago no especificado" })
+    }
+
+    // Verificar que el cliente existe si se proporciona un ID
     let clienteId = null
     if (cliente_id) {
       const [clientes] = await connection.query("SELECT * FROM clientes WHERE id = ?", [cliente_id])
@@ -259,6 +264,7 @@ export const createVentaEquipo = async (req, res) => {
       clienteId = cliente_id
     }
 
+    // Verificar que el equipo existe, pertenece al punto de venta y no está vendido
     const [equipos] = await connection.query(
       "SELECT * FROM equipos WHERE id = ? AND punto_venta_id = ? AND vendido = 0",
       [equipo_id, punto_venta_id],
@@ -266,211 +272,238 @@ export const createVentaEquipo = async (req, res) => {
     if (equipos.length === 0) {
       await connection.rollback()
       return res.status(404).json({
-        message: "Equipo no encontrado, no pertenece al punto de venta o ya fue vendido",
+        message: "Equipo no encontrado, no pertenece al punto de venta seleccionado, o ya ha sido vendido",
       })
     }
+
+    // Obtener el tipo de cambio actual del sistema
+    const [tcRows] = await connection.query(`SELECT valor FROM tipo_cambio ORDER BY fecha DESC LIMIT 1`)
+    const tipoCambio = tcRows.length > 0 ? Number.parseFloat(tcRows[0].valor) : equipos[0].tipo_cambio
+
     const equipo = equipos[0]
-
-    // --- Tipo de cambio y cálculos de la venta (similares a antes) ---
-    const [tcRows] = await connection.query(`SELECT valor FROM tipo_cambio WHERE activo = 1 ORDER BY fecha DESC LIMIT 1`)
-    const tipoCambioVenta = tcRows.length > 0 ? Number.parseFloat(tcRows[0].valor) : equipo.tipo_cambio
-
     const precioUSD = equipo.precio
-    const precioARS = precioUSD * tipoCambioVenta
+    const precioARS = precioUSD * tipoCambio
+
+    // Calcular descuento por plan canje
     let descuentoPlanCanje = 0
     if (plan_canje && plan_canje.precio) {
       descuentoPlanCanje = plan_canje.precio
     }
-    const subtotalUSD = precioUSD - descuentoPlanCanje
-    // const subtotalARS = subtotalUSD * tipoCambioVenta // No es necesario para el total de la venta si los pagos tienen su propio TC
 
+    // Calcular subtotal (precio - descuento plan canje)
+    const subtotalUSD = precioUSD - descuentoPlanCanje
+    const subtotalARS = subtotalUSD * tipoCambio
+
+    // Calcular montos de interés y descuento
     const montoInteresUSD = (subtotalUSD * porcentaje_interes) / 100
     const montoDescuentoUSD = (subtotalUSD * porcentaje_descuento) / 100
-    // const montoInteresARS = montoInteresUSD * tipoCambioVenta
-    // const montoDescuentoARS = montoDescuentoUSD * tipoCambioVenta
+    const montoInteresARS = montoInteresUSD * tipoCambio
+    const montoDescuentoARS = montoDescuentoUSD * tipoCambio
 
-    const totalVentaUSD = subtotalUSD + montoInteresUSD - montoDescuentoUSD
-    const totalVentaARS = totalVentaUSD * tipoCambioVenta // Total de la venta en ARS con el TC de la venta
+    // Calcular totales
+    const totalUSD = subtotalUSD + montoInteresUSD - montoDescuentoUSD
+    const totalARS = totalUSD * tipoCambio
 
-    // --- Procesar pagos ---
-    let totalPagadoUSD = 0
-    let totalPagadoARS = 0
-    for (const pago of pagos) {
-      if (!pago.tipo_pago || !pago.monto_usd || !pago.monto_ars || !pago.tipo_cambio_pago) {
-        await connection.rollback()
-        return res.status(400).json({ message: "Cada pago debe tener tipo_pago, monto_usd, monto_ars y tipo_cambio_pago." })
-      }
-      totalPagadoUSD += Number(pago.monto_usd)
-      totalPagadoARS += Number(pago.monto_ars)
-
-      // Validar si es cuenta corriente y se requiere cliente
-      const tipoPagoNombreNormalizado = pago.tipo_pago.toLowerCase().trim()
-      if ((tipoPagoNombreNormalizado === "cuenta corriente" || tipoPagoNombreNormalizado === "cuenta") && !clienteId) {
-        await connection.rollback()
-        return res.status(400).json({ message: "Se requiere un cliente para pagos con cuenta corriente." })
-      }
-    }
-    
-    // Validar que el total pagado coincida con el total de la venta (o manejar pagos parciales si es necesario)
-    // Por ahora, asumimos que el total pagado debe cubrir el total de la venta.
-    // Se puede ajustar esta lógica para permitir pagos parciales y actualizar `estado_pago`.
-    if (Math.abs(totalPagadoUSD - totalVentaUSD) > 0.01) { // Usar una pequeña tolerancia para comparaciones de punto flotante
-        // await connection.rollback(); // Comentado para permitir pagos parciales o diferentes
-        // return res.status(400).json({ message: `El total pagado en USD (${totalPagadoUSD.toFixed(2)}) no coincide con el total de la venta (${totalVentaUSD.toFixed(2)}).` });
-        console.warn(`Advertencia: El total pagado en USD (${totalPagadoUSD.toFixed(2)}) no coincide con el total de la venta (${totalVentaUSD.toFixed(2)}). Se registrará como pago parcial/excedente.`);
-    }
-
-
-    // --- Insertar la venta ---
+    // Generar número de factura
     const numeroFactura = await generarNumeroFactura()
-    const multiplesPagosFlag = pagos.length > 1
-    
-    // Determinar estado_pago
-    let estadoPago = 'completo';
-    const saldoPendienteUSD = totalVentaUSD - totalPagadoUSD;
-    const saldoPendienteARS = totalVentaARS - totalPagadoARS; // Asumiendo que el TC de la venta aplica al saldo
 
-    if (Math.abs(saldoPendienteUSD) < 0.01) {
-        estadoPago = 'completo';
-    } else if (totalPagadoUSD > 0 && totalPagadoUSD < totalVentaUSD) {
-        estadoPago = 'parcial';
-    } else if (totalPagadoUSD === 0) {
-        estadoPago = 'pendiente';
-    }
-    // Considerar también si totalPagadoUSD > totalVentaUSD (pago excedente)
-
+    // Insertar la venta usando la fecha formateada correctamente
     const [resultVenta] = await connection.query(
       `INSERT INTO ventas_equipos (
-                numero_factura, cliente_id, usuario_id, punto_venta_id, 
+                numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago,
                 equipo_id, precio_usd, precio_ars, tipo_cambio,
                 porcentaje_interes, monto_interes, porcentaje_descuento, monto_descuento,
-                total_usd, total_ars, fecha, multiples_pagos, notas,
-                estado_pago, total_pagado_usd, total_pagado_ars, saldo_pendiente_usd, saldo_pendiente_ars, fecha_ultimo_pago
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                total_usd, total_ars, fecha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        numeroFactura, clienteId, usuario_id, punto_venta_id,
-        equipo_id, precioUSD, precioARS, tipoCambioVenta,
-        porcentaje_interes, montoInteresUSD, porcentaje_descuento, montoDescuentoUSD,
-        totalVentaUSD, totalVentaARS, fechaActual, multiplesPagosFlag, notas,
-        estadoPago, totalPagadoUSD, totalPagadoARS, saldoPendienteUSD, saldoPendienteARS, (totalPagadoUSD > 0 ? fechaActual : null)
+        numeroFactura,
+        clienteId,
+        usuario_id,
+        punto_venta_id,
+        tipo_pago,
+        equipo_id,
+        precioUSD,
+        precioARS,
+        tipoCambio,
+        porcentaje_interes,
+        montoInteresUSD,
+        porcentaje_descuento,
+        montoDescuentoUSD,
+        totalUSD,
+        totalARS,
+        fechaActual,
       ],
     )
+
     const ventaId = resultVenta.insertId
 
-    // --- Insertar los pagos en `venta_equipo_pagos` ---
-    for (const pago of pagos) {
-      let movimientoCuentaId = null
-      const tipoPagoNombreNormalizado = pago.tipo_pago.toLowerCase().trim()
+    // Marcar el equipo como vendido y asociarlo a esta venta
+    await connection.query("UPDATE equipos SET vendido = 1, venta_id = ? WHERE id = ?", [ventaId, equipo_id])
 
-      if ((tipoPagoNombreNormalizado === "cuenta corriente" || tipoPagoNombreNormalizado === "cuenta")) {
-        const [cuentasCorrientes] = await connection.query(
-          "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
-          [clienteId],
-        )
-        let cuentaCorrienteId
-        let saldoAnteriorCC = 0
-
-        if (cuentasCorrientes.length === 0) {
-          const [resultCuenta] = await connection.query(
-            "INSERT INTO cuentas_corrientes (cliente_id, saldo, fecha_ultimo_movimiento) VALUES (?, ?, ?)",
-            [clienteId, Number(pago.monto_ars), fechaActual], // El saldo inicial es el monto del cargo
-          )
-          cuentaCorrienteId = resultCuenta.insertId
-        } else {
-          cuentaCorrienteId = cuentasCorrientes[0].id
-          saldoAnteriorCC = Number(cuentasCorrientes[0].saldo)
-          if (
-            cuentasCorrientes[0].limite_credito > 0 &&
-            (saldoAnteriorCC + Number(pago.monto_ars)) > cuentasCorrientes[0].limite_credito
-          ) {
-            await connection.rollback()
-            return res.status(400).json({ message: `El pago con cuenta corriente excede el límite de crédito del cliente para el pago de ARS ${pago.monto_ars}.` })
-          }
-          await connection.query(
-            "UPDATE cuentas_corrientes SET saldo = saldo + ?, fecha_ultimo_movimiento = ? WHERE id = ?",
-            [Number(pago.monto_ars), fechaActual, cuentaCorrienteId],
-          )
-        }
-        const saldoNuevoCC = saldoAnteriorCC + Number(pago.monto_ars)
-        const [resultMovimiento] = await connection.query(
-          `INSERT INTO movimientos_cuenta_corriente (
-                        cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
-                        referencia_id, tipo_referencia, usuario_id, notas, fecha
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            cuentaCorrienteId, "cargo", Number(pago.monto_ars), saldoAnteriorCC, saldoNuevoCC,
-            ventaId, "venta_equipo", usuario_id, `Cargo por venta de equipo #${numeroFactura} (Pago ${pago.tipo_pago})`, fechaActual,
-          ],
-        )
-        movimientoCuentaId = resultMovimiento.insertId
-      }
-
+    // Si hay plan canje, registrarlo y crear un nuevo equipo en el inventario
+    let equipoCanjeId = null
+    if (plan_canje) {
+      // Registrar en la tabla plan_canje
       await connection.query(
-        `INSERT INTO venta_equipo_pagos (
-                    venta_equipo_id, tipo_pago, monto_usd, monto_ars, tipo_cambio_pago, 
-                    descripcion, movimiento_cuenta_id, usuario_id, punto_venta_id, fecha_pago
+        `INSERT INTO plan_canje (
+                    venta_equipo_id, marca, modelo, memoria, color, bateria,
+                    precio, descripcion, imei, fecha_ingreso
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          ventaId, pago.tipo_pago, Number(pago.monto_usd), Number(pago.monto_ars), Number(pago.tipo_cambio_pago),
-          pago.descripcion || null, movimientoCuentaId, usuario_id, punto_venta_id, fechaActual,
+          ventaId,
+          plan_canje.marca,
+          plan_canje.modelo,
+          plan_canje.memoria || null,
+          plan_canje.color || null,
+          plan_canje.bateria || null,
+          plan_canje.precio,
+          plan_canje.descripcion || null,
+          plan_canje.imei,
+          plan_canje.fecha_ingreso || new Date().toISOString().split("T")[0],
+        ],
+      )
+
+      // Crear un nuevo equipo en el inventario con el equipo recibido por canje
+      const [resultEquipoCanje] = await connection.query(
+        `INSERT INTO equipos (
+                    marca, modelo, memoria, color, bateria, precio, descripcion, 
+                    imei, fecha_ingreso, punto_venta_id, tipo_cambio, tipo_cambio_original, 
+                    vendido, venta_id, es_canje, cliente_canje_id, venta_canje_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          plan_canje.marca,
+          plan_canje.modelo,
+          plan_canje.memoria || null,
+          plan_canje.color || null,
+          plan_canje.bateria || null,
+          plan_canje.precio,
+          plan_canje.descripcion || `Equipo recibido por plan canje en venta #${numeroFactura}`,
+          plan_canje.imei,
+          plan_canje.fecha_ingreso || new Date().toISOString().split("T")[0],
+          punto_venta_id,
+          tipoCambio,
+          tipoCambio, // Guardar el tipo de cambio actual como original
+          0, // No vendido
+          null, // Sin venta asociada
+          1, // Es un equipo de canje
+          clienteId, // Cliente que entregó el equipo
+          ventaId, // ID de la venta donde se recibió el equipo
+        ],
+      )
+
+      equipoCanjeId = resultEquipoCanje.insertId
+
+      // Registrar en log_equipos el ingreso del equipo por canje
+      await connection.query(
+        `INSERT INTO log_equipos (
+                    equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
+                ) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          equipoCanjeId,
+          "ajuste",
+          ventaId,
+          usuario_id,
+          fechaActual,
+          `Equipo recibido por plan canje en venta #${numeroFactura}`,
         ],
       )
     }
 
-    // --- Resto de la lógica (marcar equipo, plan canje, logs) similar a antes ---
-    await connection.query("UPDATE equipos SET vendido = 1, venta_id = ? WHERE id = ?", [ventaId, equipo_id])
-
-    let equipoCanjeId = null
-    if (plan_canje) {
-      // (Lógica de plan canje sin cambios significativos, asegurarse que usa `fechaActual`)
-      await connection.query(
-        `INSERT INTO plan_canje (venta_equipo_id, marca, modelo, memoria, color, bateria, precio, descripcion, imei, fecha_ingreso) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [ventaId, plan_canje.marca, plan_canje.modelo, plan_canje.memoria || null, plan_canje.color || null, plan_canje.bateria || null, plan_canje.precio, plan_canje.descripcion || null, plan_canje.imei, plan_canje.fecha_ingreso || fechaActual.split(' ')[0]]
-      );
-      const [resultEquipoCanje] = await connection.query(
-        `INSERT INTO equipos (marca, modelo, memoria, color, bateria, precio, descripcion, imei, fecha_ingreso, punto_venta_id, tipo_cambio, tipo_cambio_original, vendido, venta_id, es_canje, cliente_canje_id, venta_canje_id, fecha_creacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 1, ?, ?, ?)`,
-        [plan_canje.marca, plan_canje.modelo, plan_canje.memoria || null, plan_canje.color || null, plan_canje.bateria || null, plan_canje.precio, plan_canje.descripcion || `Equipo recibido por plan canje en venta #${numeroFactura}`, plan_canje.imei, plan_canje.fecha_ingreso || fechaActual.split(' ')[0], punto_venta_id, tipoCambioVenta, tipoCambioVenta, clienteId, ventaId, fechaActual]
-      );
-      equipoCanjeId = resultEquipoCanje.insertId;
-      await connection.query(
-        `INSERT INTO log_equipos (equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, ?, ?, ?)`,
-        [equipoCanjeId, "ajuste", ventaId, usuario_id, fechaActual, `Equipo recibido por plan canje en venta #${numeroFactura}`]
-      );
-    }
-
+    // Registrar en log_equipos
     await connection.query(
-      `INSERT INTO log_equipos (equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO log_equipos (
+                equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
       [equipo_id, "venta", ventaId, usuario_id, fechaActual, notas || `Venta de equipo #${numeroFactura}`],
     )
-    
-    // Registrar en log_estados_pago_equipos
-    await connection.query(
-        `INSERT INTO log_estados_pago_equipos (
-            venta_equipo_id, estado_anterior, estado_nuevo, 
-            monto_pago_usd, monto_pago_ars, tipo_pago, usuario_id, fecha, notas
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-            ventaId, 
-            null, // Estado anterior es null para una nueva venta
-            estadoPago,
-            totalPagadoUSD, 
-            totalPagadoARS, 
-            pagos.map(p => p.tipo_pago).join(', '), // Concatena los tipos de pago
-            usuario_id, 
-            fechaActual, 
-            `Venta inicial de equipo #${numeroFactura}`
-        ]
-    );
 
+    // Si el tipo de pago es cuenta corriente, registrar el movimiento
+    const tipoPagoNombre = tipo_pago.toLowerCase()
+    if (tipoPagoNombre === "cuenta corriente" || tipoPagoNombre === "cuenta") {
+      if (!clienteId) {
+        await connection.rollback()
+        return res.status(400).json({
+          message: "Se requiere un cliente para ventas con cuenta corriente",
+        })
+      }
+
+      // Verificar si el cliente tiene cuenta corriente
+      const [cuentasCorrientes] = await connection.query(
+        "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
+        [clienteId],
+      )
+
+      let cuentaCorrienteId
+
+      if (cuentasCorrientes.length === 0) {
+        // Crear cuenta corriente para el cliente
+        const [resultCuenta] = await connection.query(
+          "INSERT INTO cuentas_corrientes (cliente_id, saldo) VALUES (?, ?)",
+          [clienteId, totalARS],
+        )
+        cuentaCorrienteId = resultCuenta.insertId
+      } else {
+        cuentaCorrienteId = cuentasCorrientes[0].id
+
+        // Verificar límite de crédito si existe
+        if (
+          cuentasCorrientes[0].limite_credito > 0 &&
+          cuentasCorrientes[0].saldo + totalARS > cuentasCorrientes[0].limite_credito
+        ) {
+          await connection.rollback()
+          return res.status(400).json({
+            message: "La venta excede el límite de crédito del cliente",
+          })
+        }
+
+        // Actualizar saldo
+        await connection.query(
+          "UPDATE cuentas_corrientes SET saldo = saldo + ?, fecha_ultimo_movimiento = ? WHERE id = ?",
+          [totalARS, fechaActual, cuentaCorrienteId],
+        )
+      }
+
+      // Registrar movimiento
+      await connection.query(
+        `INSERT INTO movimientos_cuenta_corriente (
+                    cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
+                    referencia_id, tipo_referencia, usuario_id, notas
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          cuentaCorrienteId,
+          "cargo",
+          totalARS,
+          cuentasCorrientes.length > 0 ? Number(cuentasCorrientes[0].saldo) : 0,
+          cuentasCorrientes.length > 0 ? Number(cuentasCorrientes[0].saldo) + totalARS : totalARS,
+          ventaId,
+          "venta_equipo",
+          usuario_id,
+          "Venta de equipo a cuenta corriente",
+        ],
+      )
+    } else {
+      // Si no es cuenta corriente, registrar el pago normal usando la función centralizada
+      await registrarPagoInterno(connection, {
+        monto: totalARS,
+        tipo_pago: tipo_pago,
+        referencia_id: ventaId,
+        tipo_referencia: "venta", // ← Usar "venta" en lugar de "venta_equipo"
+        cliente_id: clienteId,
+        usuario_id,
+        punto_venta_id,
+        notas: notas || "Pago de venta de equipo #" + numeroFactura,
+      })
+    }
 
     await connection.commit()
+
     res.status(201).json({
       id: ventaId,
       numero_factura: numeroFactura,
-      total_usd: totalVentaUSD,
-      total_ars: totalVentaARS,
+      total_usd: totalUSD,
+      total_ars: totalARS,
       equipo_canje_id: equipoCanjeId,
-      message: "Venta de equipo registrada exitosamente con múltiples pagos.",
+      message: "Venta de equipo registrada exitosamente",
     })
   } catch (error) {
     await connection.rollback()
@@ -481,7 +514,7 @@ export const createVentaEquipo = async (req, res) => {
   }
 }
 
-// Anular una venta de equipo (modificado para manejar múltiples pagos)
+// Anular una venta de equipo
 export const anularVentaEquipo = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -497,113 +530,139 @@ export const anularVentaEquipo = async (req, res) => {
   }
 
   const connection = await pool.getConnection()
+
   try {
     await connection.beginTransaction()
+
+    // Usar la función utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
+    // Verificar que la venta existe y no está anulada
     const [ventas] = await connection.query("SELECT * FROM ventas_equipos WHERE id = ?", [id])
+
     if (ventas.length === 0) {
       await connection.rollback()
       return res.status(404).json({ message: "Venta de equipo no encontrada" })
     }
+
     const venta = ventas[0]
+
     if (venta.anulada) {
       await connection.rollback()
       return res.status(400).json({ message: "La venta de equipo ya está anulada" })
     }
 
-    // --- Revertir pagos y movimientos de cuenta corriente ---
-    const [pagosDeVenta] = await connection.query(
-      "SELECT * FROM venta_equipo_pagos WHERE venta_equipo_id = ?",
-      [id],
-    )
-
-    for (const pago of pagosDeVenta) {
-      if (pago.movimiento_cuenta_id) {
-        // Revertir movimiento de cuenta corriente
-        const [movimientoOriginal] = await connection.query(
-          "SELECT * FROM movimientos_cuenta_corriente WHERE id = ?",
-          [pago.movimiento_cuenta_id],
-        )
-        if (movimientoOriginal.length > 0) {
-          const mov = movimientoOriginal[0]
-          const [cuentaCorrienteActual] = await connection.query(
-            "SELECT * FROM cuentas_corrientes WHERE id = ?",
-            [mov.cuenta_corriente_id]
-          )
-          let saldoAnteriorCCAnulacion = 0;
-          if(cuentaCorrienteActual.length > 0){
-            saldoAnteriorCCAnulacion = Number(cuentaCorrienteActual[0].saldo);
-          }
-
-          await connection.query(
-            "UPDATE cuentas_corrientes SET saldo = saldo - ?, fecha_ultimo_movimiento = ? WHERE id = ?",
-            [mov.monto, fechaActual, mov.cuenta_corriente_id], // Restar el monto del cargo original
-          )
-          const saldoNuevoCCAnulacion = saldoAnteriorCCAnulacion - Number(mov.monto);
-
-          await connection.query(
-            `INSERT INTO movimientos_cuenta_corriente (
-                            cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
-                            referencia_id, tipo_referencia, usuario_id, notas, fecha
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              mov.cuenta_corriente_id, "pago", mov.monto, saldoAnteriorCCAnulacion, saldoNuevoCCAnulacion, // 'pago' para revertir el 'cargo'
-              id, "ajuste", usuario_id, `Anulación de cargo por venta de equipo #${venta.numero_factura} (Pago ${pago.tipo_pago}): ${motivo}`, fechaActual,
-            ],
-          )
-        }
-      }
-    }
-    // No es necesario eliminar de `venta_equipo_pagos` si la venta se marca como anulada,
-    // pero si se quisiera, aquí sería el lugar. Por ahora, se mantiene el historial.
-    // await connection.query("DELETE FROM venta_equipo_pagos WHERE venta_equipo_id = ?", [id]);
-
-    // --- Resto de la lógica de anulación (equipo, plan canje, logs) similar a antes ---
+    // Desmarcar el equipo como vendido
     await connection.query("UPDATE equipos SET vendido = 0, venta_id = NULL WHERE id = ?", [venta.equipo_id])
+
+    // Registrar en log_equipos
     await connection.query(
-      `INSERT INTO log_equipos (equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, ?, ?, ?)`,
-      [venta.equipo_id, "ajuste", id, usuario_id, fechaActual, `Anulación de venta de equipo #${venta.numero_factura}: ${motivo}`],
+      `INSERT INTO log_equipos (
+                equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        venta.equipo_id,
+        "ajuste",
+        id,
+        usuario_id,
+        fechaActual,
+        `Anulación de venta de equipo #${venta.numero_factura}: ${motivo}`,
+      ],
     )
 
+    // Verificar si hay un plan canje asociado a esta venta
     const [planCanje] = await connection.query("SELECT * FROM plan_canje WHERE venta_equipo_id = ?", [id])
+
     if (planCanje.length > 0) {
-      const [equiposCanje] = await connection.query("SELECT * FROM equipos WHERE es_canje = 1 AND venta_canje_id = ?", [id])
+      // Buscar el equipo que se creó por el plan canje
+      const [equiposCanje] = await connection.query("SELECT * FROM equipos WHERE es_canje = 1 AND venta_canje_id = ?", [
+        id,
+      ])
+
       if (equiposCanje.length > 0) {
         const equipoCanjeId = equiposCanje[0].id
+
+        // Registrar en log_equipos la eliminación del equipo de canje
         await connection.query(
-          `INSERT INTO log_equipos (equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, ?, ?, ?)`,
-          [equipoCanjeId, "ajuste", id, usuario_id, fechaActual, `Eliminación equipo de canje por anulación de venta #${venta.numero_factura}: ${motivo}`]
-        );
+          `INSERT INTO log_equipos (
+                    equipo_id, tipo_movimiento, referencia_id, usuario_id, fecha, notas
+                ) VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            equipoCanjeId,
+            "ajuste",
+            id,
+            usuario_id,
+            fechaActual,
+            `Eliminación de equipo de canje por anulación de venta #${venta.numero_factura}: ${motivo}`,
+          ],
+        )
+
+        // Eliminar el equipo de canje
         await connection.query("DELETE FROM equipos WHERE id = ?", [equipoCanjeId])
       }
-      // También eliminar de la tabla plan_canje
-      await connection.query("DELETE FROM plan_canje WHERE venta_equipo_id = ?", [id]);
     }
-    
-    // Registrar en log_estados_pago_equipos la anulación
-     await connection.query(
-        `INSERT INTO log_estados_pago_equipos (
-            venta_equipo_id, estado_anterior, estado_nuevo, 
-            usuario_id, fecha, notas
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-            id, 
-            venta.estado_pago, 
-            'anulada', // Nuevo estado
-            usuario_id, 
-            fechaActual, 
-            `Anulación de venta: ${motivo}`
-        ]
-    );
 
+    // Si la venta fue con cuenta corriente, revertir el movimiento
+    const tipoPagoNombre = venta.tipo_pago.toLowerCase()
+    if (venta.cliente_id && (tipoPagoNombre === "cuenta corriente" || tipoPagoNombre === "cuenta")) {
+      // Obtener la cuenta corriente del cliente
+      const [cuentasCorrientes] = await connection.query(
+        "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
+        [venta.cliente_id],
+      )
 
+      if (cuentasCorrientes.length > 0) {
+        const cuentaCorriente = cuentasCorrientes[0]
+
+        // Actualizar saldo de la cuenta corriente
+        await connection.query(
+          "UPDATE cuentas_corrientes SET saldo = saldo - ?, fecha_ultimo_movimiento = ? WHERE id = ?",
+          [venta.total_ars, fechaActual, cuentaCorriente.id],
+        )
+
+        // Registrar movimiento de reversión
+        await connection.query(
+          `INSERT INTO movimientos_cuenta_corriente (
+                        cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
+                        referencia_id, tipo_referencia, usuario_id, notas
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            cuentaCorriente.id,
+            "pago",
+            venta.total_ars,
+            cuentaCorriente.saldo,
+            cuentaCorriente.saldo - venta.total_ars,
+            id,
+            "ajuste",
+            usuario_id,
+            "Anulación de venta de equipo: " + motivo,
+          ],
+        )
+      }
+    } else {
+      // Anular los pagos asociados a esta venta
+      const [pagos] = await connection.query(
+        "SELECT * FROM pagos WHERE referencia_id = ? AND tipo_referencia = 'venta'",
+        [id],
+      )
+
+      for (const pago of pagos) {
+        await connection.query("UPDATE pagos SET anulado = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?", [
+          fechaActual,
+          `Anulación de venta de equipo: ${motivo}`,
+          pago.id,
+        ])
+      }
+    }
+
+    // Anular la venta
     await connection.query(
-      "UPDATE ventas_equipos SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ?, estado_pago = 'anulada', saldo_pendiente_usd = total_usd, saldo_pendiente_ars = total_ars, total_pagado_usd = 0, total_pagado_ars = 0 WHERE id = ?",
+      "UPDATE ventas_equipos SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?",
       [fechaActual, motivo, id],
     )
 
     await connection.commit()
+
     res.json({
       message: "Venta de equipo anulada exitosamente",
       id: venta.id,
