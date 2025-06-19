@@ -10,17 +10,27 @@ import {
   anularVenta,
   getEstadisticasVentas,
   getDevolucionesByVenta,
-} from "../controllers/productos/venta.controller.js" // Asegúrate que la ruta al controlador sea correcta
-import { verifyToken } from "../middlewares/verifyToken.js" // Asegúrate que la ruta al middleware sea correcta
+} from "../controllers/productos/venta.controller.js"
+import { verifyToken } from "../middlewares/verifyToken.js"
 
 const router = Router()
 
 // Middleware para verificar token en todas las rutas
 router.use(verifyToken())
 
-// Validaciones para crear venta (MODIFICADO para múltiples pagos)
+// Validaciones para crear venta
 const validateVenta = [
   check("punto_venta_id").isNumeric().withMessage("ID de punto de venta inválido"),
+  // Se elimina la validación para 'tipo_pago' individual
+  // Nueva validación para el array 'pagos'
+  check("pagos").isArray({ min: 1 }).withMessage("Se requiere al menos un método de pago."),
+  check("pagos.*.monto")
+    .isNumeric()
+    .withMessage("El monto de cada pago debe ser un número.")
+    .toFloat() // Convertir a float para validación
+    .isFloat({ gt: 0 })
+    .withMessage("El monto de cada pago debe ser mayor a cero."),
+  check("pagos.*.tipo_pago").isString().notEmpty().withMessage("El tipo de pago es obligatorio para cada pago."),
   check("productos").isArray({ min: 1 }).withMessage("Debe incluir al menos un producto"),
   check("productos.*.id").isNumeric().withMessage("ID de producto inválido"),
   check("productos.*.cantidad")
@@ -31,21 +41,8 @@ const validateVenta = [
   check("productos.*.precio")
     .isNumeric()
     .withMessage("El precio debe ser un número")
-    .custom((value) => value >= 0) // Permitir precio 0 si es necesario
-    .withMessage("El precio debe ser mayor o igual a cero"),
-  check("pagos").isArray({ min: 1 }).withMessage("Debe incluir al menos un método de pago."),
-  check("pagos.*.tipo_pago").notEmpty().isString().withMessage("Cada pago debe tener un tipo_pago válido."),
-  check("pagos.*.monto")
-    .isNumeric()
-    .withMessage("El monto de cada pago debe ser numérico.")
     .custom((value) => value > 0)
-    .withMessage("El monto de cada pago debe ser mayor a cero."),
-  check("cliente_id").optional({ nullable: true }).isNumeric().withMessage("ID de cliente inválido si se proporciona."),
-  check("porcentaje_descuento")
-    .optional()
-    .isFloat({ min: 0, max: 100 })
-    .withMessage("El porcentaje de descuento debe estar entre 0 y 100."),
-  // Ya no se valida un único tipo_pago aquí, se valida el array 'pagos'
+    .withMessage("El precio debe ser mayor a cero"),
 ]
 
 // Validaciones para anular venta

@@ -1,6 +1,6 @@
 import pool from "../../db.js"
 import { validationResult } from "express-validator"
-import { registrarPagoInterno } from "../pago.controller.js" // Asumiendo que esta función existe y es correcta
+import { registrarPagoInterno } from "../pago.controller.js"
 import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
 // Generar número de factura único - CORREGIDO para usar fecha de Argentina
@@ -21,15 +21,11 @@ const generarNumeroFactura = async () => {
   )
 
   let numero = 1
-  if (ultimaFactura.length > 0 && ultimaFactura[0].numero_factura) {
-    const ultimoNumeroStr = ultimaFactura[0].numero_factura.split("-")[1]
-    if (ultimoNumeroStr) {
-      const ultimoNumero = Number.parseInt(ultimoNumeroStr)
-      if (!isNaN(ultimoNumero)) {
-        numero = ultimoNumero + 1
-      }
-    }
+  if (ultimaFactura.length > 0) {
+    const ultimoNumero = Number.parseInt(ultimaFactura[0].numero_factura.split("-")[1])
+    numero = ultimoNumero + 1
   }
+
   return `${prefijo}-${numero.toString().padStart(4, "0")}`
 }
 
@@ -94,7 +90,7 @@ export const getVentasPaginadas = async (req, res) => {
         u.nombre AS usuario_nombre,
         pv.id AS punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        v.tipo_pago AS tipo_pago_nombre, -- Se mantiene para compatibilidad, pero los detalles están en tabla pagos
+        v.tipo_pago AS tipo_pago_nombre,
         GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres,
         COUNT(DISTINCT dv.id) AS cantidad_productos
       FROM ventas v
@@ -131,7 +127,7 @@ export const getVentasPaginadas = async (req, res) => {
     // Filtrar por fecha de fin
     if (fecha_fin) {
       sql += ` AND DATE(v.fecha) <= ?`
-      countSql += ` AND DATE(v.fecha) <= ?` // Corregido: debe ser <=
+      countSql += ` AND DATE(v.fecha) >= ?`
       params.push(fecha_fin)
       countParams.push(fecha_fin)
     }
@@ -194,11 +190,11 @@ export const getVentasPaginadas = async (req, res) => {
 
     // Búsqueda general optimizada
     if (search) {
-      sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ? OR p.nombre LIKE ? OR p.codigo LIKE ?)`
-      countSql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ? OR p.nombre LIKE ? OR p.codigo LIKE ?)`
+      sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
+      countSql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
       const searchPattern = `%${search}%`
-      params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
-      countParams.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
+      params.push(searchPattern, searchPattern, searchPattern)
+      countParams.push(searchPattern, searchPattern, searchPattern)
     }
 
     // Agrupar por venta para evitar duplicados
@@ -365,7 +361,7 @@ export const getVentas = async (req, res) => {
         u.nombre AS usuario_nombre,
         pv.id AS punto_venta_id,
         pv.nombre AS punto_venta_nombre,
-        v.tipo_pago AS tipo_pago_nombre -- Se mantiene para compatibilidad
+        v.tipo_pago AS tipo_pago_nombre
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       JOIN usuarios u ON v.usuario_id = u.id
@@ -421,7 +417,7 @@ export const getVentas = async (req, res) => {
   }
 }
 
-// CORREGIDO: Obtener una venta por ID con su detalle - Manejo mejorado de errores
+// MODIFICADO: Obtener una venta por ID con su detalle y sus pagos
 export const getVentaById = async (req, res) => {
   try {
     const { id } = req.params
@@ -433,7 +429,7 @@ export const getVentaById = async (req, res) => {
 
     const ventaId = Number(id)
 
-    // Obtener la información de la venta con manejo de errores mejorado
+    // Obtener la información de la venta
     const [ventas] = await pool.query(
       `
       SELECT 
@@ -453,7 +449,7 @@ export const getVentaById = async (req, res) => {
         v.cliente_id,
         v.usuario_id,
         v.punto_venta_id,
-        v.tipo_pago AS tipo_pago_nombre, -- Se mantiene para compatibilidad
+        v.tipo_pago AS tipo_pago_nombre,
         COALESCE(c.nombre, NULL) AS cliente_nombre,
         COALESCE(c.telefono, NULL) AS cliente_telefono,
         COALESCE(u.nombre, 'Usuario eliminado') AS usuario_nombre,
@@ -473,77 +469,55 @@ export const getVentaById = async (req, res) => {
 
     const venta = ventas[0]
 
-    // Verificar que los datos básicos existen (pero no fallar si faltan referencias)
-    if (!venta.usuario_id || !venta.punto_venta_id) {
-      console.warn(`Datos de referencia faltantes en venta ${ventaId}:`, {
-        usuario_id: venta.usuario_id,
-        punto_venta_id: venta.punto_venta_id,
-      })
-      // Continuar con valores por defecto en lugar de fallar
-    }
+    // Obtener el detalle de la venta
+    const [detalles] = await pool.query(
+      `
+      SELECT 
+        dv.id,
+        dv.producto_id,
+        COALESCE(p.codigo, 'N/A') AS producto_codigo,
+        COALESCE(p.nombre, 'Producto eliminado') AS producto_nombre,
+        dv.cantidad,
+        dv.precio_unitario,
+        dv.precio_con_descuento,
+        dv.subtotal,
+        COALESCE(dv.devuelto, 0) AS devuelto,
+        COALESCE(dv.es_reemplazo, 0) AS es_reemplazo,
+        dv.devolucion_id,
+        dv.fecha_devolucion,
+        COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
+      FROM detalle_ventas dv
+      LEFT JOIN productos p ON dv.producto_id = p.id
+      LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id 
+        AND dd.devolucion_id IN (
+          SELECT id FROM devoluciones WHERE venta_id = ? AND COALESCE(anulada, 0) = 0
+        )
+      WHERE dv.venta_id = ?
+      GROUP BY dv.id, dv.producto_id, p.codigo, p.nombre, dv.cantidad, 
+               dv.precio_unitario, dv.precio_con_descuento, dv.subtotal, 
+               dv.devuelto, dv.es_reemplazo, dv.devolucion_id, dv.fecha_devolucion
+      ORDER BY dv.id
+      `,
+      [ventaId, ventaId],
+    )
+    venta.detalles = detalles || []
 
-    // Obtener el detalle de la venta con manejo de errores mejorado
-    try {
-      const [detalles] = await pool.query(
-        `
-        SELECT 
-          dv.id,
-          dv.producto_id,
-          COALESCE(p.codigo, 'N/A') AS producto_codigo,
-          COALESCE(p.nombre, 'Producto eliminado') AS producto_nombre,
-          dv.cantidad,
-          dv.precio_unitario,
-          dv.precio_con_descuento,
-          dv.subtotal,
-          COALESCE(dv.devuelto, 0) AS devuelto,
-          COALESCE(dv.es_reemplazo, 0) AS es_reemplazo,
-          dv.devolucion_id,
-          dv.fecha_devolucion,
-          COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
-        FROM detalle_ventas dv
-        LEFT JOIN productos p ON dv.producto_id = p.id
-        LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id 
-          AND dd.devolucion_id IN (
-            SELECT id FROM devoluciones WHERE venta_id = ? AND COALESCE(anulada, 0) = 0
-          )
-        WHERE dv.venta_id = ?
-        GROUP BY dv.id, dv.producto_id, p.codigo, p.nombre, dv.cantidad, 
-                 dv.precio_unitario, dv.precio_con_descuento, dv.subtotal, 
-                 dv.devuelto, dv.es_reemplazo, dv.devolucion_id, dv.fecha_devolucion
-        ORDER BY dv.id
-        `,
-        [ventaId, ventaId],
-      )
-
-      venta.detalles = detalles || []
-    } catch (detalleError) {
-      console.error(`Error al obtener detalles de venta ${ventaId}:`, detalleError)
-      venta.detalles = []
-    }
-
-    // Obtener los pagos asociados a esta venta con manejo de errores
-    try {
-      const [pagosRegistrados] = await pool.query(
-        // Renombrado para evitar conflicto con req.body.pagos
-        `
-        SELECT 
-          p.id,
-          p.monto,
-          p.fecha,
-          COALESCE(p.anulado, 0) AS anulado,
-          COALESCE(p.tipo_pago, 'N/A') AS tipo_pago_nombre
-        FROM pagos p
-        WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta' AND COALESCE(p.anulado, 0) = 0
-        ORDER BY p.fecha DESC
-        `,
-        [ventaId],
-      )
-
-      venta.pagos = pagosRegistrados || [] // Asignar los pagos recuperados a la propiedad venta.pagos
-    } catch (pagoError) {
-      console.error(`Error al obtener pagos de venta ${ventaId}:`, pagoError)
-      venta.pagos = []
-    }
+    // Obtener los pagos asociados a esta venta
+    const [pagos] = await pool.query(
+      `
+      SELECT 
+        p.id,
+        p.monto,
+        p.fecha,
+        COALESCE(p.anulado, 0) AS anulado,
+        p.tipo_pago AS tipo_pago_nombre
+      FROM pagos p
+      WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta'
+      ORDER BY p.fecha DESC
+      `,
+      [ventaId],
+    )
+    venta.pagos = pagos || []
 
     // Asegurar que todos los campos numéricos sean números
     venta.subtotal = Number(venta.subtotal) || 0
@@ -577,7 +551,7 @@ export const getVentaById = async (req, res) => {
   }
 }
 
-// MODIFICADO: Crear una nueva venta para soportar múltiples pagos
+// MODIFICADO: Crear una nueva venta con múltiples pagos
 export const createVenta = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -587,9 +561,9 @@ export const createVenta = async (req, res) => {
   const {
     cliente_id,
     punto_venta_id,
+    pagos, // Se recibe un array de pagos
     productos,
-    pagos, // Array de pagos: [{ tipo_pago: string, monto: number }]
-    porcentaje_interes = 0, // Interés general (visual, no afecta el total a pagar directamente aquí)
+    porcentaje_interes = 0,
     porcentaje_descuento = 0,
     notas,
   } = req.body
@@ -597,9 +571,10 @@ export const createVenta = async (req, res) => {
   if (!req.user || !req.user.id) {
     return res.status(401).json({ message: "Usuario no autenticado o ID de usuario no disponible" })
   }
-  const usuario_id = req.user.id
 
+  const usuario_id = req.user.id
   const connection = await pool.getConnection()
+
   try {
     await connection.beginTransaction()
 
@@ -611,109 +586,114 @@ export const createVenta = async (req, res) => {
       return res.status(404).json({ message: "Punto de venta no encontrado" })
     }
 
-    const clienteId = cliente_id ? Number(cliente_id) : null
-    if (clienteId) {
-      const [clientes] = await connection.query("SELECT * FROM clientes WHERE id = ?", [clienteId])
+    let clienteId = null
+    if (cliente_id) {
+      const [clientes] = await connection.query("SELECT * FROM clientes WHERE id = ?", [cliente_id])
       if (clientes.length === 0) {
         await connection.rollback()
         return res.status(404).json({ message: "Cliente no encontrado" })
       }
+      clienteId = cliente_id
     }
 
     if (!productos || productos.length === 0) {
       await connection.rollback()
       return res.status(400).json({ message: "La venta debe tener al menos un producto" })
     }
-    if (!pagos || pagos.length === 0) {
-      await connection.rollback()
-      return res.status(400).json({ message: "La venta debe tener al menos un método de pago" })
-    }
 
-    let subtotalVenta = 0
+    let subtotal = 0
     for (const producto of productos) {
       const [productosDb] = await connection.query("SELECT * FROM productos WHERE id = ?", [producto.id])
       if (productosDb.length === 0) {
         await connection.rollback()
         return res.status(404).json({ message: `Producto con ID ${producto.id} no encontrado` })
       }
+
       const [inventario] = await connection.query(
         "SELECT stock FROM inventario WHERE producto_id = ? AND punto_venta_id = ?",
         [producto.id, punto_venta_id],
       )
+
       if (inventario.length === 0 || inventario[0].stock < producto.cantidad) {
         await connection.rollback()
-        return res.status(400).json({ message: `Stock insuficiente para ${productosDb[0].nombre}` })
+        return res.status(400).json({
+          message: `Stock insuficiente para el producto ${productosDb[0].nombre}`,
+        })
       }
-      let precioConDescuentoProducto = Number(producto.precio)
-      if (producto.descuento && Number(producto.descuento.porcentaje) > 0) {
-        precioConDescuentoProducto = Number(producto.precio) * (1 - Number(producto.descuento.porcentaje) / 100)
+
+      let precioConDescuento = producto.precio
+      if (producto.descuento && producto.descuento.porcentaje > 0) {
+        precioConDescuento = producto.precio * (1 - producto.descuento.porcentaje / 100)
       }
-      subtotalVenta += precioConDescuentoProducto * Number(producto.cantidad)
+      subtotal += precioConDescuento * producto.cantidad
     }
 
-    const montoDescuentoGeneral = (subtotalVenta * Number(porcentaje_descuento)) / 100
-    const totalVenta = subtotalVenta - montoDescuentoGeneral
-    // El `porcentaje_interes` general es visual y no se suma al `totalVenta` que se guarda en la BD.
-    // El interés de tarjeta se maneja a nivel de pago individual si es necesario, pero no aquí.
+    const montoInteres = (subtotal * porcentaje_interes) / 100
+    const montoDescuento = (subtotal * porcentaje_descuento) / 100
+    const total = subtotal - montoDescuento
 
-    const totalPagado = pagos.reduce((acc, pago) => acc + Number(pago.monto), 0)
-    if (Math.abs(totalPagado - totalVenta) > 0.01) {
-      // Permitir una pequeña diferencia por redondeo
+    // Validar que la suma de los pagos coincida con el total
+    const totalPagado = pagos.reduce((sum, pago) => sum + Number(pago.monto), 0)
+    if (Math.abs(totalPagado - total) > 0.01) {
       await connection.rollback()
       return res.status(400).json({
-        message: `El total de los pagos (${totalPagado.toFixed(2)}) no coincide con el total de la venta (${totalVenta.toFixed(2)})`,
+        message: `El monto total de los pagos (${totalPagado.toFixed(2)}) no coincide con el total de la venta (${total.toFixed(2)})`,
       })
     }
 
     const numeroFactura = await generarNumeroFactura()
 
-    // Determinar el `tipo_pago` para la tabla `ventas`
-    // Si hay múltiples pagos, se guarda "Múltiple". Si solo hay uno, se guarda ese.
-    const tipoPagoParaTablaVentas = pagos.length > 1 ? "Múltiple" : pagos[0].tipo_pago
+    // Determinar el valor para la columna tipo_pago
+    const tipoPagoDisplay = pagos.length > 1 ? "Múltiple" : pagos[0].tipo_pago
 
     const [resultVenta] = await connection.query(
       `INSERT INTO ventas (
         numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago,
         subtotal, porcentaje_interes, monto_interes, porcentaje_descuento, monto_descuento, total,
-        tiene_devoluciones, fecha, notas
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tiene_devoluciones, fecha
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         numeroFactura,
         clienteId,
         usuario_id,
         punto_venta_id,
-        tipoPagoParaTablaVentas, // Tipo de pago principal o "Múltiple"
-        subtotalVenta,
-        Number(porcentaje_interes), // Guardar el interés general visual si se desea
-        (subtotalVenta * Number(porcentaje_interes)) / 100, // Calcular monto de interés general
-        Number(porcentaje_descuento),
-        montoDescuentoGeneral,
-        totalVenta,
-        0, // tiene_devoluciones
+        tipoPagoDisplay,
+        subtotal,
+        porcentaje_interes,
+        montoInteres,
+        porcentaje_descuento,
+        montoDescuento,
+        total,
+        0,
         fechaActual,
-        notas,
       ],
     )
+
     const ventaId = resultVenta.insertId
 
     for (const producto of productos) {
-      let precioConDescuentoProducto = Number(producto.precio)
-      if (producto.descuento && Number(producto.descuento.porcentaje) > 0) {
-        precioConDescuentoProducto = Number(producto.precio) * (1 - Number(producto.descuento.porcentaje) / 100)
+      let precioConDescuento = producto.precio
+      if (producto.descuento && producto.descuento.porcentaje > 0) {
+        precioConDescuento = producto.precio * (1 - producto.descuento.porcentaje / 100)
       }
+
       await connection.query(
         `INSERT INTO detalle_ventas (
-          venta_id, producto_id, cantidad, precio_unitario, precio_con_descuento, subtotal
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
+          venta_id, producto_id, cantidad, precio_unitario, precio_con_descuento, subtotal,
+          devuelto, es_reemplazo
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           ventaId,
           producto.id,
           producto.cantidad,
           producto.precio,
-          precioConDescuentoProducto,
-          precioConDescuentoProducto * producto.cantidad,
+          precioConDescuento,
+          precioConDescuento * producto.cantidad,
+          0,
+          0,
         ],
       )
+
       await connection.query("UPDATE inventario SET stock = stock - ? WHERE producto_id = ? AND punto_venta_id = ?", [
         producto.cantidad,
         producto.id,
@@ -721,98 +701,27 @@ export const createVenta = async (req, res) => {
       ])
     }
 
-    // Registrar cada pago
+    // Registrar cada pago utilizando la función centralizada
     for (const pago of pagos) {
-      const montoPago = Number(pago.monto)
-      const tipoPagoNombre = pago.tipo_pago.toLowerCase()
-
-      if (tipoPagoNombre === "cuenta corriente" || tipoPagoNombre === "cuenta") {
-        if (!clienteId) {
-          await connection.rollback()
-          return res.status(400).json({ message: "Se requiere un cliente para pagos con Cuenta Corriente" })
-        }
-        const [cuentasCorrientes] = await connection.query(
-          "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
-          [clienteId],
-        )
-        let cuentaCorrienteId
-        let saldoAnteriorCC = 0
-
-        if (cuentasCorrientes.length === 0) {
-          const [resultCuenta] = await connection.query(
-            "INSERT INTO cuentas_corrientes (cliente_id, saldo, fecha_ultimo_movimiento) VALUES (?, ?, ?)",
-            [clienteId, montoPago, fechaActual],
-          )
-          cuentaCorrienteId = resultCuenta.insertId
-        } else {
-          cuentaCorrienteId = cuentasCorrientes[0].id
-          saldoAnteriorCC = Number(cuentasCorrientes[0].saldo)
-          if (
-            cuentasCorrientes[0].limite_credito > 0 &&
-            saldoAnteriorCC + montoPago > cuentasCorrientes[0].limite_credito
-          ) {
-            await connection.rollback()
-            return res
-              .status(400)
-              .json({ message: `El pago con Cuenta Corriente excede el límite de crédito del cliente` })
-          }
-          await connection.query(
-            "UPDATE cuentas_corrientes SET saldo = saldo + ?, fecha_ultimo_movimiento = ? WHERE id = ?",
-            [montoPago, fechaActual, cuentaCorrienteId],
-          )
-        }
-        await connection.query(
-          `INSERT INTO movimientos_cuenta_corriente (
-            cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
-            referencia_id, tipo_referencia, usuario_id, notas, fecha
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            cuentaCorrienteId,
-            "cargo", // Un pago a la venta es un cargo a la CC del cliente
-            montoPago,
-            saldoAnteriorCC,
-            saldoAnteriorCC + montoPago,
-            ventaId,
-            "venta",
-            usuario_id,
-            `Pago de venta #${numeroFactura}`,
-            fechaActual,
-          ],
-        )
-        // También registrar en la tabla 'pagos' para consistencia
-        await registrarPagoInterno(connection, {
-          monto: montoPago,
-          tipo_pago: pago.tipo_pago, // Usar el nombre original del tipo de pago
-          referencia_id: ventaId,
-          tipo_referencia: "venta",
-          cliente_id: clienteId,
-          usuario_id,
-          punto_venta_id,
-          notas: `Pago (Cuenta Corriente) de venta #${numeroFactura}`,
-          fecha: fechaActual,
-        })
-      } else {
-        // Para otros tipos de pago, usar registrarPagoInterno
-        await registrarPagoInterno(connection, {
-          monto: montoPago,
-          tipo_pago: pago.tipo_pago,
-          referencia_id: ventaId,
-          tipo_referencia: "venta",
-          cliente_id: clienteId,
-          usuario_id,
-          punto_venta_id,
-          notas: `Pago de venta #${numeroFactura}`,
-          fecha: fechaActual,
-        })
-      }
+      await registrarPagoInterno(connection, {
+        monto: pago.monto,
+        tipo_pago: pago.tipo_pago,
+        referencia_id: ventaId,
+        tipo_referencia: "venta",
+        cliente_id: clienteId,
+        usuario_id,
+        punto_venta_id,
+        notas: notas || `Pago de venta de productos #${numeroFactura}`,
+      })
     }
 
     await connection.commit()
+
     res.status(201).json({
       id: ventaId,
       numero_factura: numeroFactura,
-      total: totalVenta,
-      message: "Venta registrada exitosamente con múltiples pagos",
+      total,
+      message: "Venta registrada exitosamente",
     })
   } catch (error) {
     await connection.rollback()
@@ -823,7 +732,7 @@ export const createVenta = async (req, res) => {
   }
 }
 
-// Anular una venta
+// MODIFICADO: Anular una venta y sus pagos asociados
 export const anularVenta = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -845,7 +754,7 @@ export const anularVenta = async (req, res) => {
 
     const fechaActual = formatearFechaParaDB()
 
-    const [ventas] = await connection.query("SELECT v.* FROM ventas v WHERE v.id = ?", [id])
+    const [ventas] = await connection.query("SELECT * FROM ventas WHERE id = ?", [id])
     if (ventas.length === 0) {
       await connection.rollback()
       return res.status(404).json({ message: "Venta no encontrada" })
@@ -858,63 +767,63 @@ export const anularVenta = async (req, res) => {
     }
 
     // Revertir stock de productos
-    const [detallesVenta] = await connection.query("SELECT * FROM detalle_ventas WHERE venta_id = ?", [id])
-    for (const detalle of detallesVenta) {
-      // Solo revertir stock si no fue devuelto previamente en una devolución no anulada
-      if (!detalle.devuelto) {
-        await connection.query("UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?", [
-          detalle.cantidad,
-          detalle.producto_id,
-          venta.punto_venta_id,
-        ])
-      }
+    const [detalles] = await connection.query("SELECT * FROM detalle_ventas WHERE venta_id = ?", [id])
+    for (const detalle of detalles) {
+      await connection.query(
+        "UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?",
+        [detalle.cantidad, detalle.producto_id, venta.punto_venta_id],
+      )
     }
 
-    // Anular pagos asociados a la venta
-    const [pagosAnteriores] = await connection.query(
-      "SELECT * FROM pagos WHERE referencia_id = ? AND tipo_referencia = 'venta' AND anulado = 0",
+    // Anular pagos asociados y revertir movimientos de cuenta corriente
+    const [pagosAsociados] = await connection.query(
+      "SELECT * FROM pagos WHERE referencia_id = ? AND tipo_referencia = 'venta'",
       [id],
     )
 
-    for (const pago of pagosAnteriores) {
+    for (const pago of pagosAsociados) {
+      if (pago.anulado) continue
+
+      // Anular el pago
       await connection.query("UPDATE pagos SET anulado = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?", [
         fechaActual,
         `Anulación de venta #${venta.numero_factura}: ${motivo}`,
         pago.id,
       ])
 
-      // Si el pago fue a cuenta corriente, revertir el movimiento
-      const tipoPagoNombre = pago.tipo_pago.toLowerCase()
-      if ((tipoPagoNombre === "cuenta corriente" || tipoPagoNombre === "cuenta") && venta.cliente_id) {
-        const [cuentasCorrientes] = await connection.query(
-          "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
-          [venta.cliente_id],
-        )
-        if (cuentasCorrientes.length > 0) {
-          const cuentaCorriente = cuentasCorrientes[0]
-          const saldoAnteriorCC = Number(cuentaCorriente.saldo)
-          const nuevoSaldoCC = saldoAnteriorCC - Number(pago.monto) // Restar el monto del pago
+      // Si el pago era de tipo 'cuenta corriente', revertir el saldo
+      if (pago.tipo_pago.toLowerCase() === "cuenta corriente" && pago.cliente_id) {
+        const [cuentas] = await connection.query("SELECT * FROM cuentas_corrientes WHERE cliente_id = ?", [
+          pago.cliente_id,
+        ])
+        if (cuentas.length > 0) {
+          const cuenta = cuentas[0]
+          // Al anular un pago, el saldo de la CC debe aumentar (se devuelve el cargo)
+          const saldoAnterior = Number(cuenta.saldo)
+          const nuevoSaldo = saldoAnterior + Number(pago.monto)
 
           await connection.query("UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?", [
-            nuevoSaldoCC,
+            nuevoSaldo,
             fechaActual,
-            cuentaCorriente.id,
+            cuenta.id,
           ])
+
+          // Registrar el movimiento de reversión (como un cargo)
           await connection.query(
             `INSERT INTO movimientos_cuenta_corriente (
-                        cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo,
-                        referencia_id, tipo_referencia, usuario_id, notas, fecha
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
+              referencia_id, tipo_referencia, usuario_id, notas, fecha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-              cuentaCorriente.id,
-              "abono", // Es un abono porque se revierte un cargo previo
-              Number(pago.monto),
-              saldoAnteriorCC,
-              nuevoSaldoCC,
-              id, // Referencia a la venta anulada
-              "anulacion_venta",
+              cuenta.id,
+              "cargo", // Revertir un pago es un nuevo cargo a la deuda
+              pago.monto,
+              saldoAnterior,
+              nuevoSaldo,
+              pago.id,
+              "ajuste",
               usuario_id,
-              `Anulación pago de venta #${venta.numero_factura}`,
+              `Reversión por anulación de pago #${pago.id}`,
               fechaActual,
             ],
           )
@@ -932,15 +841,7 @@ export const anularVenta = async (req, res) => {
     await connection.commit()
 
     const [ventaActualizada] = await connection.query(
-      `SELECT 
-        v.id, 
-        v.numero_factura, 
-        v.fecha, 
-        v.anulada,
-        v.fecha_anulacion,
-        v.motivo_anulacion
-      FROM ventas v
-      WHERE v.id = ?`,
+      `SELECT id, numero_factura, fecha, anulada, fecha_anulacion, motivo_anulacion FROM ventas WHERE id = ?`,
       [id],
     )
 
@@ -962,13 +863,13 @@ export const getEstadisticasVentas = async (req, res) => {
   try {
     const { fecha_inicio, fecha_fin, punto_venta_id } = req.query
 
-    let whereClause = "WHERE v.anulada = 0" // Modificado para referenciar la tabla ventas con 'v'
+    let whereClause = "WHERE anulada = 0"
     const params = []
 
     // Filtrar por fecha de inicio
     if (fecha_inicio) {
       const fechaInicioFormatted = formatLocalDate(new Date(fecha_inicio), true)
-      whereClause += " AND v.fecha >= ?" // Modificado para referenciar la tabla ventas con 'v'
+      whereClause += " AND fecha >= ?"
       params.push(fechaInicioFormatted)
     }
 
@@ -977,32 +878,31 @@ export const getEstadisticasVentas = async (req, res) => {
       const fechaFinDate = new Date(fecha_fin)
       fechaFinDate.setHours(23, 59, 59, 999)
       const fechaFinFormatted = formatLocalDate(fechaFinDate, true)
-      whereClause += " AND v.fecha <= ?" // Modificado para referenciar la tabla ventas con 'v'
+      whereClause += " AND fecha <= ?"
       params.push(fechaFinFormatted)
     }
 
     // Filtrar por punto de venta
     if (punto_venta_id) {
-      whereClause += " AND v.punto_venta_id = ?" // Modificado para referenciar la tabla ventas con 'v'
+      whereClause += " AND punto_venta_id = ?"
       params.push(punto_venta_id)
     }
 
     // Total de ventas
     const [totalVentas] = await pool.query(
-      `SELECT COUNT(v.id) as cantidad, SUM(v.total) as monto FROM ventas v ${whereClause}`, // Modificado para referenciar la tabla ventas con 'v'
+      `SELECT COUNT(*) as cantidad, SUM(total) as monto FROM ventas ${whereClause}`,
       params,
     )
 
-    // Ventas por tipo de pago (ahora desde la tabla pagos)
+    // Ventas por tipo de pago
     const [ventasPorMetodo] = await pool.query(
       `SELECT 
-        p.tipo_pago as tipo_pago, 
-        COUNT(DISTINCT v.id) as cantidad_ventas, -- Contar ventas únicas
-        SUM(p.monto) as monto 
-      FROM pagos p
-      JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
-      ${whereClause} AND p.anulado = 0
-      GROUP BY p.tipo_pago
+        v.tipo_pago as tipo_pago, 
+        COUNT(v.id) as cantidad, 
+        SUM(v.total) as monto 
+      FROM ventas v
+      ${whereClause}
+      GROUP BY v.tipo_pago
       ORDER BY monto DESC`,
       params,
     )
@@ -1024,16 +924,16 @@ export const getEstadisticasVentas = async (req, res) => {
     // Productos más vendidos
     const [productosMasVendidos] = await pool.query(
       `SELECT 
-        pr.id,
-        pr.codigo,
-        pr.nombre,
+        p.id,
+        p.codigo,
+        p.nombre,
         SUM(dv.cantidad) as cantidad_vendida,
         SUM(dv.subtotal) as monto_total
       FROM detalle_ventas dv
-      JOIN productos pr ON dv.producto_id = pr.id -- Cambiado 'p' a 'pr' para evitar conflicto
+      JOIN productos p ON dv.producto_id = p.id
       JOIN ventas v ON dv.venta_id = v.id
       ${whereClause}
-      GROUP BY dv.producto_id, pr.id, pr.codigo, pr.nombre -- Agregado pr.id, pr.codigo, pr.nombre al GROUP BY
+      GROUP BY dv.producto_id
       ORDER BY cantidad_vendida DESC
       LIMIT 10`,
       params,
@@ -1041,7 +941,7 @@ export const getEstadisticasVentas = async (req, res) => {
 
     res.json({
       total_ventas: {
-        cantidad: totalVentas[0].cantidad || 0,
+        cantidad: totalVentas[0].cantidad,
         monto: totalVentas[0].monto || 0,
       },
       ventas_por_metodo: ventasPorMetodo,
