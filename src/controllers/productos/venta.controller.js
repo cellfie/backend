@@ -47,7 +47,7 @@ const formatLocalDate = (date, includeTime = false) => {
   return `${year}-${month}-${day}`
 }
 
-// OPTIMIZADO: Obtener ventas con paginación mejorada y búsqueda por productos
+// CORREGIDO: Obtener ventas con paginación mejorada y búsqueda por productos
 export const getVentasPaginadas = async (req, res) => {
   try {
     const {
@@ -102,6 +102,7 @@ export const getVentasPaginadas = async (req, res) => {
       WHERE 1=1
     `
 
+    // CORREGIDO: Consulta de conteo que coincida exactamente con la consulta principal
     let countSql = `
       SELECT COUNT(DISTINCT v.id) as total
       FROM ventas v
@@ -124,10 +125,10 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(fecha_inicio)
     }
 
-    // Filtrar por fecha de fin
+    // CORREGIDO: Filtrar por fecha de fin (estaba mal el countSql)
     if (fecha_fin) {
       sql += ` AND DATE(v.fecha) <= ?`
-      countSql += ` AND DATE(v.fecha) >= ?`
+      countSql += ` AND DATE(v.fecha) <= ?`
       params.push(fecha_fin)
       countParams.push(fecha_fin)
     }
@@ -226,6 +227,7 @@ export const getVentasPaginadas = async (req, res) => {
     const total = countResult[0][0].total
     const totalPages = Math.ceil(total / Number.parseInt(limit))
 
+    // MEJORADO: Respuesta con información de paginación más completa
     res.json({
       ventas,
       pagination: {
@@ -235,7 +237,28 @@ export const getVentasPaginadas = async (req, res) => {
         itemsPerPage: Number.parseInt(limit),
         hasNextPage: Number.parseInt(page) < totalPages,
         hasPrevPage: Number.parseInt(page) > 1,
+        startItem: offset + 1,
+        endItem: Math.min(offset + Number.parseInt(limit), total)
       },
+      // NUEVO: Información adicional para debugging
+      debug: {
+        appliedFilters: {
+          fecha_inicio,
+          fecha_fin,
+          cliente_id,
+          punto_venta_id,
+          anuladas,
+          search,
+          producto_id,
+          producto_nombre
+        },
+        queryInfo: {
+          totalVentasEncontradas: total,
+          ventasMostradas: ventas.length,
+          paginaActual: Number.parseInt(page),
+          elementosPorPagina: Number.parseInt(limit)
+        }
+      }
     })
   } catch (error) {
     console.error("Error al obtener ventas paginadas:", error)
