@@ -47,7 +47,7 @@ const formatLocalDate = (date, includeTime = false) => {
   return `${year}-${month}-${day}`
 }
 
-// CORREGIDO: Obtener ventas con paginación mejorada y búsqueda por productos
+// CORREGIDO: Obtener ventas con paginación mejorada y filtro de método de pago corregido
 export const getVentasPaginadas = async (req, res) => {
   try {
     const {
@@ -61,13 +61,14 @@ export const getVentasPaginadas = async (req, res) => {
       search,
       producto_id,
       producto_nombre,
+      tipo_pago, // CORREGIDO: Filtro por método de pago
       sort_by = "fecha",
       sort_order = "DESC",
     } = req.query
 
     const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
 
-    // Consulta base optimizada con índices
+    // CORREGIDO: Consulta base optimizada que incluye información de pagos
     let sql = `
       SELECT DISTINCT
         v.id, 
@@ -92,17 +93,22 @@ export const getVentasPaginadas = async (req, res) => {
         pv.nombre AS punto_venta_nombre,
         v.tipo_pago AS tipo_pago_nombre,
         GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres,
-        COUNT(DISTINCT dv.id) AS cantidad_productos
+        COUNT(DISTINCT dv.id) AS cantidad_productos,
+        -- NUEVO: Información de métodos de pago reales
+        GROUP_CONCAT(DISTINCT pg.tipo_pago ORDER BY pg.tipo_pago SEPARATOR ', ') AS metodos_pago_reales,
+        COUNT(DISTINCT pg.tipo_pago) AS cantidad_metodos_pago
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       JOIN usuarios u ON v.usuario_id = u.id
       JOIN puntos_venta pv ON v.punto_venta_id = pv.id
       LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
       LEFT JOIN productos p ON dv.producto_id = p.id
+      -- NUEVO: JOIN con tabla de pagos para obtener métodos reales
+      LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
       WHERE 1=1
     `
 
-    // CORREGIDO: Consulta de conteo que coincida exactamente con la consulta principal
+    // CORREGIDO: Consulta de conteo que incluye el filtro de método de pago
     let countSql = `
       SELECT COUNT(DISTINCT v.id) as total
       FROM ventas v
@@ -111,6 +117,7 @@ export const getVentasPaginadas = async (req, res) => {
       JOIN puntos_venta pv ON v.punto_venta_id = pv.id
       LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
       LEFT JOIN productos p ON dv.producto_id = p.id
+      LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
       WHERE 1=1
     `
 
@@ -125,7 +132,7 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(fecha_inicio)
     }
 
-    // CORREGIDO: Filtrar por fecha de fin (estaba mal el countSql)
+    // Filtrar por fecha de fin
     if (fecha_fin) {
       sql += ` AND DATE(v.fecha) <= ?`
       countSql += ` AND DATE(v.fecha) <= ?`
@@ -158,7 +165,35 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(anuladaValue)
     }
 
-    // MEJORADO: Búsqueda por producto específico
+    // CORREGIDO: Filtro por método de pago mejorado
+    if (tipo_pago && tipo_pago !== "todos") {
+      // Para ventas con un solo método de pago, verificar el campo tipo_pago de la venta
+      // Para ventas con múltiples métodos, verificar en la tabla de pagos
+      sql += ` AND (
+        (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR
+        (v.tipo_pago = 'Múltiple' AND EXISTS (
+          SELECT 1 FROM pagos pg2 
+          WHERE pg2.referencia_id = v.id 
+          AND pg2.tipo_referencia = 'venta' 
+          AND pg2.anulado = 0 
+          AND pg2.tipo_pago = ?
+        ))
+      )`
+      countSql += ` AND (
+        (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR
+        (v.tipo_pago = 'Múltiple' AND EXISTS (
+          SELECT 1 FROM pagos pg2 
+          WHERE pg2.referencia_id = v.id 
+          AND pg2.tipo_referencia = 'venta' 
+          AND pg2.anulado = 0 
+          AND pg2.tipo_pago = ?
+        ))
+      )`
+      params.push(tipo_pago, tipo_pago)
+      countParams.push(tipo_pago, tipo_pago)
+    }
+
+    // Búsqueda por producto específico
     if (producto_id) {
       sql += ` AND EXISTS (
         SELECT 1 FROM detalle_ventas dv2 
@@ -172,7 +207,7 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(producto_id)
     }
 
-    // NUEVO: Búsqueda por nombre de producto
+    // Búsqueda por nombre de producto
     if (producto_nombre) {
       sql += ` AND EXISTS (
         SELECT 1 FROM detalle_ventas dv3 
@@ -198,7 +233,7 @@ export const getVentasPaginadas = async (req, res) => {
       countParams.push(searchPattern, searchPattern, searchPattern)
     }
 
-    // Agrupar por venta para evitar duplicados
+    // CORREGIDO: Agrupar por venta para evitar duplicados
     sql += ` GROUP BY v.id, v.numero_factura, v.fecha, v.subtotal, v.porcentaje_interes,
              v.monto_interes, v.porcentaje_descuento, v.monto_descuento, v.total,
              v.anulada, v.fecha_anulacion, v.motivo_anulacion, v.tiene_devoluciones,
@@ -250,7 +285,8 @@ export const getVentasPaginadas = async (req, res) => {
           anuladas,
           search,
           producto_id,
-          producto_nombre
+          producto_nombre,
+          tipo_pago // NUEVO: Incluir filtro de método de pago en debug
         },
         queryInfo: {
           totalVentasEncontradas: total,
@@ -264,6 +300,60 @@ export const getVentasPaginadas = async (req, res) => {
     console.error("Error al obtener ventas paginadas:", error)
     res.status(500).json({
       message: "Error al obtener ventas paginadas",
+      error: error.message,
+    })
+  }
+}
+
+// NUEVA FUNCIÓN: Obtener métodos de pago únicos para el filtro
+export const getMetodosPagoVentas = async (req, res) => {
+  try {
+    // Obtener métodos de pago únicos de ventas con un solo método
+    const [metodosSimplesResult] = await pool.query(`
+      SELECT DISTINCT v.tipo_pago as metodo
+      FROM ventas v 
+      WHERE v.tipo_pago IS NOT NULL 
+      AND v.tipo_pago != '' 
+      AND v.tipo_pago != 'Múltiple'
+      AND v.anulada = 0
+    `)
+
+    // Obtener métodos de pago únicos de ventas múltiples
+    const [metodosMultiplesResult] = await pool.query(`
+      SELECT DISTINCT pg.tipo_pago as metodo
+      FROM pagos pg
+      JOIN ventas v ON pg.referencia_id = v.id
+      WHERE pg.tipo_referencia = 'venta'
+      AND pg.anulado = 0
+      AND v.anulada = 0
+      AND pg.tipo_pago IS NOT NULL
+      AND pg.tipo_pago != ''
+    `)
+
+    // Combinar y eliminar duplicados
+    const metodosSet = new Set()
+    
+    metodosSimplesResult.forEach(row => {
+      if (row.metodo) metodosSet.add(row.metodo)
+    })
+    
+    metodosMultiplesResult.forEach(row => {
+      if (row.metodo) metodosSet.add(row.metodo)
+    })
+
+    // Convertir a array y ordenar
+    const metodos = Array.from(metodosSet)
+      .sort()
+      .map((metodo, index) => ({
+        id: index + 1,
+        nombre: metodo
+      }))
+
+    res.json(metodos)
+  } catch (error) {
+    console.error("Error al obtener métodos de pago:", error)
+    res.status(500).json({
+      message: "Error al obtener métodos de pago",
       error: error.message,
     })
   }
@@ -525,7 +615,7 @@ export const getVentaById = async (req, res) => {
     )
     venta.detalles = detalles || []
 
-    // Obtener los pagos asociados a esta venta
+    // CORREGIDO: Obtener los pagos asociados a esta venta con mejor información
     const [pagos] = await pool.query(
       `
       SELECT 
@@ -533,7 +623,8 @@ export const getVentaById = async (req, res) => {
         p.monto,
         p.fecha,
         COALESCE(p.anulado, 0) AS anulado,
-        p.tipo_pago AS tipo_pago_nombre
+        p.tipo_pago AS tipo_pago_nombre,
+        p.notas
       FROM pagos p
       WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta'
       ORDER BY p.fecha DESC
@@ -562,6 +653,13 @@ export const getVentaById = async (req, res) => {
       cantidad_devuelta: Number(detalle.cantidad_devuelta) || 0,
       devuelto: Boolean(detalle.devuelto),
       es_reemplazo: Boolean(detalle.es_reemplazo),
+    }))
+
+    // Procesar pagos para asegurar tipos correctos
+    venta.pagos = venta.pagos.map((pago) => ({
+      ...pago,
+      monto: Number(pago.monto) || 0,
+      anulado: Boolean(pago.anulado),
     }))
 
     res.json(venta)
@@ -666,7 +764,7 @@ export const createVenta = async (req, res) => {
 
     const numeroFactura = await generarNumeroFactura()
 
-    // Determinar el valor para la columna tipo_pago
+    // CORREGIDO: Determinar el valor para la columna tipo_pago
     const tipoPagoDisplay = pagos.length > 1 ? "Múltiple" : pagos[0].tipo_pago
 
     const [resultVenta] = await connection.query(
@@ -917,15 +1015,22 @@ export const getEstadisticasVentas = async (req, res) => {
       params,
     )
 
-    // Ventas por tipo de pago
+    // CORREGIDO: Ventas por tipo de pago mejorado
     const [ventasPorMetodo] = await pool.query(
       `SELECT 
-        v.tipo_pago as tipo_pago, 
+        CASE 
+          WHEN v.tipo_pago = 'Múltiple' THEN 'Múltiple'
+          ELSE v.tipo_pago
+        END as tipo_pago, 
         COUNT(v.id) as cantidad, 
         SUM(v.total) as monto 
       FROM ventas v
       ${whereClause}
-      GROUP BY v.tipo_pago
+      GROUP BY 
+        CASE 
+          WHEN v.tipo_pago = 'Múltiple' THEN 'Múltiple'
+          ELSE v.tipo_pago
+        END
       ORDER BY monto DESC`,
       params,
     )
