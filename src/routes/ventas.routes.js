@@ -10,6 +10,7 @@ import {
   anularVenta,
   getEstadisticasVentas,
   getDevolucionesByVenta,
+  getMetodosPagoVentas, // AGREGADO: Importar la nueva función
 } from "../controllers/productos/venta.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
@@ -51,6 +52,7 @@ const validateAnulacion = [check("motivo").notEmpty().withMessage("El motivo de 
 // Rutas
 router.get("/", verifyToken(["admin", "empleado"]), getVentas)
 router.get("/paginadas", verifyToken(["admin", "empleado"]), getVentasPaginadas)
+router.get("/metodos-pago", verifyToken(["admin", "empleado"]), getMetodosPagoVentas) // AGREGADO: Nueva ruta para métodos de pago
 router.get("/search-rapido", verifyToken(["admin", "empleado"]), searchVentasRapido)
 router.get("/search-by-producto", verifyToken(["admin", "empleado"]), searchVentasByProducto)
 router.get("/estadisticas", verifyToken(["admin"]), getEstadisticasVentas)
