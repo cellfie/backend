@@ -466,7 +466,7 @@ export const getMovimientosCuentaCorriente = async (req, res) => {
 
     // Filtrar por tipo
     if (tipo) {
-      sql += " AND m.tipo = ?"
+      sql += " AND m.tipo = ?"  
       params.push(tipo)
     }
 
