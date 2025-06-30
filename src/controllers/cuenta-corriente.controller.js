@@ -300,6 +300,126 @@ export const registrarPago = async (req, res) => {
   }
 }
 
+// NUEVA FUNCIÓN: Registrar ajuste de cuenta corriente
+export const registrarAjuste = async (req, res) => {
+  const errors = validationResult(req)
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() })
+  }
+
+  const { cliente_id, monto, tipo_ajuste, motivo, punto_venta_id } = req.body
+
+  // Obtener el ID del usuario desde el token JWT
+  const usuario_id = req.user.id
+
+  const connection = await pool.getConnection()
+
+  try {
+    await connection.beginTransaction()
+
+    // Verificar si el cliente existe
+    const [clientes] = await connection.query("SELECT * FROM clientes WHERE id = ?", [cliente_id])
+
+    if (clientes.length === 0) {
+      await connection.rollback()
+      return res.status(404).json({ message: "Cliente no encontrado" })
+    }
+
+    // Verificar si el cliente tiene cuenta corriente
+    const [cuentas] = await connection.query("SELECT * FROM cuentas_corrientes WHERE cliente_id = ?", [cliente_id])
+
+    if (cuentas.length === 0) {
+      await connection.rollback()
+      return res.status(404).json({ message: "El cliente no tiene cuenta corriente" })
+    }
+
+    if (!cuentas[0].activo) {
+      await connection.rollback()
+      return res.status(400).json({ message: "La cuenta corriente está inactiva" })
+    }
+
+    // Obtener el saldo actual de la cuenta corriente y convertirlo a número
+    const cuentaCorriente = cuentas[0]
+    const saldoActual = Number.parseFloat(cuentaCorriente.saldo)
+    const montoNumerico = Number.parseFloat(monto)
+
+    // Validar el tipo de ajuste
+    if (!["pago", "cargo"].includes(tipo_ajuste)) {
+      await connection.rollback()
+      return res.status(400).json({ message: "Tipo de ajuste inválido. Debe ser 'pago' o 'cargo'" })
+    }
+
+    // Validar que si es un pago, el monto no exceda el saldo
+    if (tipo_ajuste === "pago" && montoNumerico > saldoActual) {
+      await connection.rollback()
+      return res.status(400).json({ message: "El monto del pago excede el saldo de la cuenta" })
+    }
+
+    // Calcular nuevo saldo según el tipo de ajuste
+    let nuevoSaldo
+    if (tipo_ajuste === "pago") {
+      nuevoSaldo = saldoActual - montoNumerico // Pago reduce el saldo (reduce la deuda)
+    } else {
+      nuevoSaldo = saldoActual + montoNumerico // Cargo aumenta el saldo (aumenta la deuda)
+    }
+
+    // Actualizar saldo de la cuenta corriente
+    await connection.query(
+      `UPDATE cuentas_corrientes 
+       SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+       WHERE id = ?`,
+      [nuevoSaldo, cuentaCorriente.id],
+    )
+
+    // Registrar movimiento en la cuenta corriente
+    const [resultMovimiento] = await connection.query(
+      `INSERT INTO movimientos_cuenta_corriente (
+        cuenta_corriente_id, 
+        tipo, 
+        monto, 
+        saldo_anterior, 
+        saldo_nuevo, 
+        referencia_id, 
+        tipo_referencia, 
+        fecha, 
+        usuario_id, 
+        notas
+      ) VALUES (?, ?, ?, ?, ?, NULL, 'ajuste', NOW(), ?, ?)`,
+      [
+        cuentaCorriente.id,
+        tipo_ajuste,
+        montoNumerico,
+        saldoActual.toFixed(2),
+        nuevoSaldo.toFixed(2),
+        usuario_id,
+        motivo,
+      ],
+    )
+
+    await connection.commit()
+
+    // Obtener el movimiento creado
+    const [movimiento] = await connection.query(
+      `SELECT m.*, u.nombre AS usuario_nombre
+       FROM movimientos_cuenta_corriente m
+       JOIN usuarios u ON m.usuario_id = u.id
+       WHERE m.id = ?`,
+      [resultMovimiento.insertId],
+    )
+
+    res.status(201).json({
+      ...movimiento[0],
+      message: `Ajuste de cuenta registrado exitosamente`,
+    })
+  } catch (error) {
+    await connection.rollback()
+    console.error("Error al registrar ajuste:", error)
+    res.status(500).json({ message: "Error al registrar ajuste: " + error.message })
+  } finally {
+    connection.release()
+  }
+}
+
 // Obtener movimientos de cuenta corriente
 export const getMovimientosCuentaCorriente = async (req, res) => {
   try {
