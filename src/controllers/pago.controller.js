@@ -186,10 +186,10 @@ export const registrarPagoInterno = async (
         saldoActual,
         nuevoSaldo,
         referencia_id,
-        tipo_referencia, // "venta" para ventas
+        tipo_referencia, // "venta" para ventas, "devolucion" para devoluciones
         usuario_id,
         notas ||
-          `Venta en cuenta corriente. Saldo anterior: ${saldoActual.toFixed(2)}, Nuevo saldo: ${nuevoSaldo.toFixed(2)}`,
+          `${tipo_referencia === "devolucion" ? "Devolución" : "Venta"} en cuenta corriente. Saldo anterior: ${saldoActual.toFixed(2)}, Nuevo saldo: ${nuevoSaldo.toFixed(2)}`,
       ],
     )
   }
