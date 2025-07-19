@@ -563,7 +563,7 @@ export const createDevolucion = async (req, res) => {
     }
     // Si hay diferencia y es a cargo del cliente (diferencia > 0), registrar el pago
     else if (diferencia > 0) {
-      // CORREGIDO: Usar 'devolucion' como tipo_referencia
+      // Registrar el pago
       await connection.query(
         `
         INSERT INTO pagos (
@@ -734,7 +734,7 @@ export const createDevolucion = async (req, res) => {
   } catch (error) {
     await connection.rollback()
     console.error("Error al crear devolución:", error)
-    res.status(500).json({ message: "Error al crear devolución: " + error.message })
+    res.status(500).json({ message: "Error al crear devolución" })
   } finally {
     connection.release()
   }

@@ -68,7 +68,7 @@ export const getCuentaCorrienteByCliente = async (req, res) => {
       })
     }
 
-    // Obtener los últimos movimientos SIN conversión de zona horaria
+    // Obtener los últimos movimientos
     const [movimientos] = await pool.query(
       `
             SELECT 
@@ -160,7 +160,7 @@ export const createOrUpdateCuentaCorriente = async (req, res) => {
   }
 }
 
-// Registrar pago en cuenta corriente
+// CORREGIDO: Registrar pago en cuenta corriente con lógica corregida
 export const registrarPago = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -203,19 +203,18 @@ export const registrarPago = async (req, res) => {
     const saldoActual = Number.parseFloat(cuentaCorriente.saldo)
     const montoNumerico = Number.parseFloat(monto)
 
-    // Validar que el monto no exceda el saldo
-    if (montoNumerico > saldoActual) {
+    // Validar que el monto no exceda el saldo (solo si el saldo es positivo - deuda)
+    if (saldoActual > 0 && montoNumerico > saldoActual) {
       await connection.rollback()
       return res.status(400).json({ message: "El monto del pago excede el saldo de la cuenta" })
     }
 
-    // Calcular nuevo saldo
+    // CORREGIDO: Calcular nuevo saldo - el pago REDUCE la deuda
     const nuevoSaldo = saldoActual - montoNumerico
 
-    // Registrar el pago SIN conversión de zona horaria
+    // Registrar el pago
     const [resultPago] = await connection.query(
-      `
-      INSERT INTO pagos (
+      `INSERT INTO pagos (
         monto, 
         fecha, 
         referencia_id, 
@@ -225,8 +224,7 @@ export const registrarPago = async (req, res) => {
         usuario_id, 
         punto_venta_id, 
         notas
-      ) VALUES (?, NOW(), ?, 'cuenta_corriente', ?, ?, ?, ?, ?)
-    `,
+      ) VALUES (?, NOW(), ?, 'cuenta_corriente', ?, ?, ?, ?, ?)`,
       [
         montoNumerico,
         cuentaCorriente.id,
@@ -240,18 +238,15 @@ export const registrarPago = async (req, res) => {
 
     // Actualizar saldo de la cuenta corriente
     await connection.query(
-      `
-      UPDATE cuentas_corrientes 
-      SET saldo = ?, fecha_ultimo_movimiento = NOW() 
-      WHERE id = ?
-    `,
+      `UPDATE cuentas_corrientes 
+       SET saldo = ?, fecha_ultimo_movimiento = NOW() 
+       WHERE id = ?`,
       [nuevoSaldo, cuentaCorriente.id],
     )
 
-    // Registrar movimiento en la cuenta corriente SIN conversión de zona horaria
+    // CORREGIDO: Registrar movimiento como "pago" (reduce la deuda)
     const [resultMovimiento] = await connection.query(
-      `
-      INSERT INTO movimientos_cuenta_corriente (
+      `INSERT INTO movimientos_cuenta_corriente (
         cuenta_corriente_id, 
         tipo, 
         monto, 
@@ -262,8 +257,7 @@ export const registrarPago = async (req, res) => {
         fecha, 
         usuario_id, 
         notas
-      ) VALUES (?, 'pago', ?, ?, ?, ?, 'otro', NOW(), ?, ?)
-    `,
+      ) VALUES (?, 'pago', ?, ?, ?, ?, 'cuenta_corriente', NOW(), ?, ?)`,
       [
         cuentaCorriente.id,
         montoNumerico,
@@ -277,13 +271,11 @@ export const registrarPago = async (req, res) => {
 
     await connection.commit()
 
-    // Obtener el movimiento creado SIN conversión de zona horaria
+    // Obtener el movimiento creado
     const [movimiento] = await connection.query(
-      `
-      SELECT m.*, DATE_FORMAT(m.fecha, '%Y-%m-%d %H:%i:%s') as fecha_formateada
-      FROM movimientos_cuenta_corriente m
-      WHERE m.id = ?
-    `,
+      `SELECT m.*, DATE_FORMAT(m.fecha, '%Y-%m-%d %H:%i:%s') as fecha_formateada
+       FROM movimientos_cuenta_corriente m
+       WHERE m.id = ?`,
       [resultMovimiento.insertId],
     )
 
@@ -300,7 +292,7 @@ export const registrarPago = async (req, res) => {
   }
 }
 
-// NUEVA FUNCIÓN: Registrar ajuste de cuenta corriente
+// CORREGIDO: Registrar ajuste de cuenta corriente con lógica corregida
 export const registrarAjuste = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -326,16 +318,13 @@ export const registrarAjuste = async (req, res) => {
     }
 
     // Verificar si el cliente tiene cuenta corriente
-    const [cuentas] = await connection.query("SELECT * FROM cuentas_corrientes WHERE cliente_id = ?", [cliente_id])
+    const [cuentas] = await connection.query("SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1", [
+      cliente_id,
+    ])
 
     if (cuentas.length === 0) {
       await connection.rollback()
-      return res.status(404).json({ message: "El cliente no tiene cuenta corriente" })
-    }
-
-    if (!cuentas[0].activo) {
-      await connection.rollback()
-      return res.status(400).json({ message: "La cuenta corriente está inactiva" })
+      return res.status(404).json({ message: "El cliente no tiene cuenta corriente activa" })
     }
 
     // Obtener el saldo actual de la cuenta corriente y convertirlo a número
@@ -349,13 +338,13 @@ export const registrarAjuste = async (req, res) => {
       return res.status(400).json({ message: "Tipo de ajuste inválido. Debe ser 'pago' o 'cargo'" })
     }
 
-    // Validar que si es un pago, el monto no exceda el saldo
-    if (tipo_ajuste === "pago" && montoNumerico > saldoActual) {
+    // CORREGIDO: Validar que si es un pago, el monto no exceda el saldo (solo si hay deuda)
+    if (tipo_ajuste === "pago" && saldoActual > 0 && montoNumerico > saldoActual) {
       await connection.rollback()
       return res.status(400).json({ message: "El monto del pago excede el saldo de la cuenta" })
     }
 
-    // Calcular nuevo saldo según el tipo de ajuste
+    // CORREGIDO: Calcular nuevo saldo según el tipo de ajuste
     let nuevoSaldo
     if (tipo_ajuste === "pago") {
       nuevoSaldo = saldoActual - montoNumerico // Pago reduce el saldo (reduce la deuda)
@@ -466,7 +455,7 @@ export const getMovimientosCuentaCorriente = async (req, res) => {
 
     // Filtrar por tipo
     if (tipo) {
-      sql += " AND m.tipo = ?"  
+      sql += " AND m.tipo = ?"
       params.push(tipo)
     }
 
