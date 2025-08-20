@@ -921,7 +921,7 @@ export const anularVenta = async (req, res) => {
           const cuenta = cuentas[0]
           // Al anular un pago, el saldo de la CC debe aumentar (se devuelve el cargo)
           const saldoAnterior = Number(cuenta.saldo)
-          const nuevoSaldo = saldoAnterior + Number(pago.monto)
+          const nuevoSaldo = saldoAnterior - Number(pago.monto)
 
           await connection.query("UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?", [
             nuevoSaldo,
@@ -937,7 +937,7 @@ export const anularVenta = async (req, res) => {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               cuenta.id,
-              "cargo", // Revertir un pago es un nuevo cargo a la deuda
+              "pago", // Revertir un pago es un nuevo cargo a la deuda
               pago.monto,
               saldoAnterior,
               nuevoSaldo,
