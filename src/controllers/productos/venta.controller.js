@@ -887,42 +887,13 @@ export const anularVenta = async (req, res) => {
       return res.status(400).json({ message: "La venta ya está anulada" })
     }
 
+    // Revertir stock de productos
     const [detalles] = await connection.query("SELECT * FROM detalle_ventas WHERE venta_id = ?", [id])
-    console.log(`[v0] Anulando venta ${id}: encontrados ${detalles.length} productos para revertir stock`)
-
     for (const detalle of detalles) {
-      console.log(`[v0] Revirtiendo stock para producto ${detalle.producto_id}, cantidad: ${detalle.cantidad}`)
-
-      // Verificar si existe el registro de inventario
-      const [inventarioExistente] = await connection.query(
-        "SELECT stock FROM inventario WHERE producto_id = ? AND punto_venta_id = ?",
-        [detalle.producto_id, venta.punto_venta_id],
+      await connection.query(
+        "UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?",
+        [detalle.cantidad, detalle.producto_id, venta.punto_venta_id],
       )
-
-      if (inventarioExistente.length > 0) {
-        // Actualizar stock existente
-        const stockAnterior = inventarioExistente[0].stock
-        const nuevoStock = stockAnterior + detalle.cantidad
-
-        await connection.query("UPDATE inventario SET stock = ? WHERE producto_id = ? AND punto_venta_id = ?", [
-          nuevoStock,
-          detalle.producto_id,
-          venta.punto_venta_id,
-        ])
-
-        console.log(`[v0] Stock actualizado para producto ${detalle.producto_id}: ${stockAnterior} -> ${nuevoStock}`)
-      } else {
-        // Crear registro de inventario si no existe
-        await connection.query("INSERT INTO inventario (producto_id, punto_venta_id, stock) VALUES (?, ?, ?)", [
-          detalle.producto_id,
-          venta.punto_venta_id,
-          detalle.cantidad,
-        ])
-
-        console.log(
-          `[v0] Registro de inventario creado para producto ${detalle.producto_id} con stock: ${detalle.cantidad}`,
-        )
-      }
     }
 
     // Anular pagos asociados y revertir movimientos de cuenta corriente
@@ -948,8 +919,8 @@ export const anularVenta = async (req, res) => {
         ])
         if (cuentas.length > 0) {
           const cuenta = cuentas[0]
+          // Al anular un pago, el saldo de la CC debe aumentar (se devuelve el cargo)
           const saldoAnterior = Number(cuenta.saldo)
-          // CORREGIDO: Al anular una venta, se RESTA el monto (reduce la deuda)
           const nuevoSaldo = saldoAnterior - Number(pago.monto)
 
           await connection.query("UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?", [
@@ -958,19 +929,22 @@ export const anularVenta = async (req, res) => {
             cuenta.id,
           ])
 
-          // CORREGIDO: Registrar como "pago" porque reduce la deuda
+          // Registrar el movimiento de reversión (como un cargo)
           await connection.query(
-            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, usuario_id, notas, fecha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO movimientos_cuenta_corriente (
+              cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
+              referencia_id, tipo_referencia, usuario_id, notas, fecha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               cuenta.id,
-              "pago", // Revertir una venta es como un pago que reduce la deuda
+              "pago", // Revertir un pago es un nuevo cargo a la deuda
               pago.monto,
               saldoAnterior,
               nuevoSaldo,
               pago.id,
               "ajuste",
               usuario_id,
-              `Reversión por anulación de venta #${venta.numero_factura}`,
+              `Reversión por anulación de pago #${pago.id}`,
               fechaActual,
             ],
           )
@@ -986,7 +960,6 @@ export const anularVenta = async (req, res) => {
     ])
 
     await connection.commit()
-    console.log(`[v0] Venta ${id} anulada exitosamente con stock revertido`)
 
     const [ventaActualizada] = await connection.query(
       `SELECT id, numero_factura, fecha, anulada, fecha_anulacion, motivo_anulacion FROM ventas WHERE id = ?`,
