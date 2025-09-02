@@ -410,99 +410,181 @@ export const getTotalVentasFiltradas = async (req, res) => {
       tipo_pago,
     } = req.query
 
-    // Use a subquery to first get the distinct ventas IDs, then calculate totals
-    let sql = `
-      SELECT 
-        COUNT(*) as cantidad_ventas,
-        COALESCE(SUM(total), 0) as total_monto
-      FROM (
-        SELECT DISTINCT v.id, v.total
+    if (tipo_pago && tipo_pago !== "todos") {
+      // Special query for payment method filtering - sum only the filtered payment amounts
+      let sql = `
+        SELECT 
+          COUNT(DISTINCT v.id) as cantidad_ventas,
+          COALESCE(SUM(CASE 
+            WHEN v.tipo_pago = ? AND v.tipo_pago != 'Múltiple' THEN v.total
+            WHEN v.tipo_pago = 'Múltiple' THEN (
+              SELECT COALESCE(SUM(vp.monto), 0) 
+              FROM pagos vp 
+              WHERE vp.referencia_id = v.id AND vp.tipo_pago = ?
+            )
+            ELSE 0
+          END), 0) as total_monto
         FROM ventas v
         LEFT JOIN clientes c ON v.cliente_id = c.id
         JOIN usuarios u ON v.usuario_id = u.id
         JOIN puntos_venta pv ON v.punto_venta_id = pv.id
         LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
         LEFT JOIN productos p ON dv.producto_id = p.id
-        LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
+        LEFT JOIN pagos vp ON v.id = vp.referencia_id
         WHERE 1=1
-    `
+      `
 
-    const params = []
+      const params = [tipo_pago, tipo_pago]
 
-    // Aplicar los mismos filtros que en getVentasPaginadas
-    if (fecha_inicio) {
-      sql += ` AND DATE(v.fecha) >= ?`
-      params.push(fecha_inicio)
-    }
+      // Apply same filters as getVentasPaginadas
+      if (fecha_inicio) {
+        sql += ` AND DATE(v.fecha) >= ?`
+        params.push(fecha_inicio)
+      }
 
-    if (fecha_fin) {
-      sql += ` AND DATE(v.fecha) <= ?`
-      params.push(fecha_fin)
-    }
+      if (fecha_fin) {
+        sql += ` AND DATE(v.fecha) <= ?`
+        params.push(fecha_fin)
+      }
 
-    if (cliente_id) {
-      sql += ` AND v.cliente_id = ?`
-      params.push(cliente_id)
-    }
+      if (cliente_id) {
+        sql += ` AND v.cliente_id = ?`
+        params.push(cliente_id)
+      }
 
-    if (punto_venta_id) {
-      sql += ` AND v.punto_venta_id = ?`
-      params.push(punto_venta_id)
-    }
+      if (punto_venta_id) {
+        sql += ` AND v.punto_venta_id = ?`
+        params.push(punto_venta_id)
+      }
 
-    if (anuladas !== undefined) {
-      const anuladaValue = anuladas === "true" ? 1 : 0
-      sql += ` AND v.anulada = ?`
-      params.push(anuladaValue)
-    }
+      if (anuladas !== undefined) {
+        const anuladaValue = anuladas === "true" ? 1 : 0
+        sql += ` AND v.anulada = ?`
+        params.push(anuladaValue)
+      }
 
-    if (tipo_pago && tipo_pago !== "todos") {
+      // Filter by payment method
       sql += ` AND (
         (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR
         (v.tipo_pago = 'Múltiple' AND EXISTS (
-          SELECT 1 FROM pagos pg2 
-          WHERE pg2.referencia_id = v.id 
-          AND pg2.tipo_referencia = 'venta' 
-          AND pg2.anulado = 0 
-          AND pg2.tipo_pago = ?
+          SELECT 1 FROM pagos vp2 
+          WHERE vp2.referencia_id = v.id 
+          AND vp2.tipo_pago = ?
         ))
       )`
       params.push(tipo_pago, tipo_pago)
+
+      if (producto_id) {
+        sql += ` AND EXISTS (
+          SELECT 1 FROM detalle_ventas dv2 
+          WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
+        )`
+        params.push(producto_id)
+      }
+
+      if (producto_nombre) {
+        sql += ` AND EXISTS (
+          SELECT 1 FROM detalle_ventas dv3 
+          JOIN productos p3 ON dv3.producto_id = p3.id
+          WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+        )`
+        const searchPattern = `%${producto_nombre}%`
+        params.push(searchPattern, searchPattern)
+      }
+
+      if (search) {
+        sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
+        const searchPattern = `%${search}%`
+        params.push(searchPattern, searchPattern, searchPattern)
+      }
+
+      const [result] = await pool.query(sql, params)
+      const totales = result[0]
+
+      res.json({
+        cantidad_ventas: totales.cantidad_ventas || 0,
+        total_monto: totales.total_monto || 0,
+      })
+    } else {
+      // Original query for when no payment method filter is applied
+      let sql = `
+        SELECT 
+          COUNT(*) as cantidad_ventas,
+          COALESCE(SUM(total), 0) as total_monto
+        FROM (
+          SELECT DISTINCT v.id, v.total
+          FROM ventas v
+          LEFT JOIN clientes c ON v.cliente_id = c.id
+          JOIN usuarios u ON v.usuario_id = u.id
+          JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+          LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+          LEFT JOIN productos p ON dv.producto_id = p.id
+          WHERE 1=1
+      `
+
+      const params = []
+
+      // Apply same filters as getVentasPaginadas
+      if (fecha_inicio) {
+        sql += ` AND DATE(v.fecha) >= ?`
+        params.push(fecha_inicio)
+      }
+
+      if (fecha_fin) {
+        sql += ` AND DATE(v.fecha) <= ?`
+        params.push(fecha_fin)
+      }
+
+      if (cliente_id) {
+        sql += ` AND v.cliente_id = ?`
+        params.push(cliente_id)
+      }
+
+      if (punto_venta_id) {
+        sql += ` AND v.punto_venta_id = ?`
+        params.push(punto_venta_id)
+      }
+
+      if (anuladas !== undefined) {
+        const anuladaValue = anuladas === "true" ? 1 : 0
+        sql += ` AND v.anulada = ?`
+        params.push(anuladaValue)
+      }
+
+      if (producto_id) {
+        sql += ` AND EXISTS (
+          SELECT 1 FROM detalle_ventas dv2 
+          WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
+        )`
+        params.push(producto_id)
+      }
+
+      if (producto_nombre) {
+        sql += ` AND EXISTS (
+          SELECT 1 FROM detalle_ventas dv3 
+          JOIN productos p3 ON dv3.producto_id = p3.id
+          WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+        )`
+        const searchPattern = `%${producto_nombre}%`
+        params.push(searchPattern, searchPattern)
+      }
+
+      if (search) {
+        sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
+        const searchPattern = `%${search}%`
+        params.push(searchPattern, searchPattern, searchPattern)
+      }
+
+      sql += ` GROUP BY v.id, v.total) as distinct_ventas`
+
+      const [result] = await pool.query(sql, params)
+      const totales = result[0]
+
+      res.json({
+        cantidad_ventas: totales.cantidad_ventas || 0,
+        total_monto: totales.total_monto || 0,
+      })
     }
-
-    if (producto_id) {
-      sql += ` AND EXISTS (
-        SELECT 1 FROM detalle_ventas dv2 
-        WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
-      )`
-      params.push(producto_id)
-    }
-
-    if (producto_nombre) {
-      sql += ` AND EXISTS (
-        SELECT 1 FROM detalle_ventas dv3 
-        JOIN productos p3 ON dv3.producto_id = p3.id
-        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
-      )`
-      const searchPattern = `%${producto_nombre}%`
-      params.push(searchPattern, searchPattern)
-    }
-
-    if (search) {
-      sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
-      const searchPattern = `%${search}%`
-      params.push(searchPattern, searchPattern, searchPattern)
-    }
-
-    sql += ` GROUP BY v.id, v.total) as distinct_ventas`
-
-    const [result] = await pool.query(sql, params)
-    const totales = result[0]
-
-    res.json({
-      cantidad_ventas: totales.cantidad_ventas || 0,
-      total_monto: totales.total_monto || 0,
-    })
   } catch (error) {
     console.error("Error al obtener total de ventas filtradas:", error)
     res.status(500).json({
