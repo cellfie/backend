@@ -395,7 +395,7 @@ export const searchVentasByProducto = async (req, res) => {
   }
 }
 
-// NUEVA FUNCIÓN: Obtener total sum of filtered sales without pagination
+// MODIFICADO: Obtener total sum of filtered sales without pagination
 export const getTotalVentasFiltradas = async (req, res) => {
   try {
     const {
@@ -410,19 +410,21 @@ export const getTotalVentasFiltradas = async (req, res) => {
       tipo_pago,
     } = req.query
 
-    // Consulta para obtener el total de ventas filtradas
+    // Use a subquery to first get the distinct ventas IDs, then calculate totals
     let sql = `
       SELECT 
-        COUNT(DISTINCT v.id) as cantidad_ventas,
-        COALESCE(SUM(DISTINCT v.total), 0) as total_monto
-      FROM ventas v
-      LEFT JOIN clientes c ON v.cliente_id = c.id
-      JOIN usuarios u ON v.usuario_id = u.id
-      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
-      LEFT JOIN productos p ON dv.producto_id = p.id
-      LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
-      WHERE 1=1
+        COUNT(*) as cantidad_ventas,
+        COALESCE(SUM(total), 0) as total_monto
+      FROM (
+        SELECT DISTINCT v.id, v.total
+        FROM ventas v
+        LEFT JOIN clientes c ON v.cliente_id = c.id
+        JOIN usuarios u ON v.usuario_id = u.id
+        JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+        LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+        LEFT JOIN productos p ON dv.producto_id = p.id
+        LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
+        WHERE 1=1
     `
 
     const params = []
@@ -491,6 +493,8 @@ export const getTotalVentasFiltradas = async (req, res) => {
       const searchPattern = `%${search}%`
       params.push(searchPattern, searchPattern, searchPattern)
     }
+
+    sql += ` GROUP BY v.id, v.total) as distinct_ventas`
 
     const [result] = await pool.query(sql, params)
     const totales = result[0]
