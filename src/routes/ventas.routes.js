@@ -10,7 +10,8 @@ import {
   anularVenta,
   getEstadisticasVentas,
   getDevolucionesByVenta,
-  getMetodosPagoVentas, // AGREGADO: Importar la nueva función
+  getMetodosPagoVentas,
+  getTotalVentasFiltradas, // AGREGADO: Importar la nueva función
 } from "../controllers/productos/venta.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
@@ -24,7 +25,9 @@ const validateVenta = [
   check("punto_venta_id").isNumeric().withMessage("ID de punto de venta inválido"),
   // Se elimina la validación para 'tipo_pago' individual
   // Nueva validación para el array 'pagos'
-  check("pagos").isArray({ min: 1 }).withMessage("Se requiere al menos un método de pago."),
+  check("pagos")
+    .isArray({ min: 1 })
+    .withMessage("Se requiere al menos un método de pago."),
   check("pagos.*.monto")
     .isNumeric()
     .withMessage("El monto de cada pago debe ser un número.")
@@ -52,7 +55,8 @@ const validateAnulacion = [check("motivo").notEmpty().withMessage("El motivo de 
 // Rutas
 router.get("/", verifyToken(["admin", "empleado"]), getVentas)
 router.get("/paginadas", verifyToken(["admin", "empleado"]), getVentasPaginadas)
-router.get("/metodos-pago", verifyToken(["admin", "empleado"]), getMetodosPagoVentas) // AGREGADO: Nueva ruta para métodos de pago
+router.get("/total-filtradas", verifyToken(["admin", "empleado"]), getTotalVentasFiltradas) // AGREGADO: Nueva ruta para totales filtrados
+router.get("/metodos-pago", verifyToken(["admin", "empleado"]), getMetodosPagoVentas)
 router.get("/search-rapido", verifyToken(["admin", "empleado"]), searchVentasRapido)
 router.get("/search-by-producto", verifyToken(["admin", "empleado"]), searchVentasByProducto)
 router.get("/estadisticas", verifyToken(["admin"]), getEstadisticasVentas)

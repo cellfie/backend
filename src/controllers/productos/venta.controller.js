@@ -273,7 +273,7 @@ export const getVentasPaginadas = async (req, res) => {
         hasNextPage: Number.parseInt(page) < totalPages,
         hasPrevPage: Number.parseInt(page) > 1,
         startItem: offset + 1,
-        endItem: Math.min(offset + Number.parseInt(limit), total)
+        endItem: Math.min(offset + Number.parseInt(limit), total),
       },
       // NUEVO: Información adicional para debugging
       debug: {
@@ -286,15 +286,15 @@ export const getVentasPaginadas = async (req, res) => {
           search,
           producto_id,
           producto_nombre,
-          tipo_pago // NUEVO: Incluir filtro de método de pago en debug
+          tipo_pago, // NUEVO: Incluir filtro de método de pago en debug
         },
         queryInfo: {
           totalVentasEncontradas: total,
           ventasMostradas: ventas.length,
           paginaActual: Number.parseInt(page),
-          elementosPorPagina: Number.parseInt(limit)
-        }
-      }
+          elementosPorPagina: Number.parseInt(limit),
+        },
+      },
     })
   } catch (error) {
     console.error("Error al obtener ventas paginadas:", error)
@@ -309,35 +309,23 @@ export const getVentasPaginadas = async (req, res) => {
 export const getMetodosPagoVentas = async (req, res) => {
   try {
     // Obtener métodos de pago únicos de ventas con un solo método
-    const [metodosSimplesResult] = await pool.query(`
-      SELECT DISTINCT v.tipo_pago as metodo
-      FROM ventas v 
-      WHERE v.tipo_pago IS NOT NULL 
-      AND v.tipo_pago != '' 
-      AND v.tipo_pago != 'Múltiple'
-      AND v.anulada = 0
-    `)
+    const [metodosSimplesResult] = await pool.query(
+      `SELECT DISTINCT v.tipo_pago as metodo FROM ventas v WHERE v.tipo_pago IS NOT NULL AND v.tipo_pago != '' AND v.tipo_pago != 'Múltiple' AND v.anulada = 0`,
+    )
 
     // Obtener métodos de pago únicos de ventas múltiples
-    const [metodosMultiplesResult] = await pool.query(`
-      SELECT DISTINCT pg.tipo_pago as metodo
-      FROM pagos pg
-      JOIN ventas v ON pg.referencia_id = v.id
-      WHERE pg.tipo_referencia = 'venta'
-      AND pg.anulado = 0
-      AND v.anulada = 0
-      AND pg.tipo_pago IS NOT NULL
-      AND pg.tipo_pago != ''
-    `)
+    const [metodosMultiplesResult] = await pool.query(
+      `SELECT DISTINCT pg.tipo_pago as metodo FROM pagos pg JOIN ventas v ON pg.referencia_id = v.id WHERE pg.tipo_referencia = 'venta' AND pg.anulado = 0 AND v.anulada = 0 AND pg.tipo_pago IS NOT NULL AND pg.tipo_pago != ''`,
+    )
 
     // Combinar y eliminar duplicados
     const metodosSet = new Set()
-    
-    metodosSimplesResult.forEach(row => {
+
+    metodosSimplesResult.forEach((row) => {
       if (row.metodo) metodosSet.add(row.metodo)
     })
-    
-    metodosMultiplesResult.forEach(row => {
+
+    metodosMultiplesResult.forEach((row) => {
       if (row.metodo) metodosSet.add(row.metodo)
     })
 
@@ -346,7 +334,7 @@ export const getMetodosPagoVentas = async (req, res) => {
       .sort()
       .map((metodo, index) => ({
         id: index + 1,
-        nombre: metodo
+        nombre: metodo,
       }))
 
     res.json(metodos)
@@ -368,26 +356,7 @@ export const searchVentasRapido = async (req, res) => {
       return res.json([])
     }
 
-    const sql = `
-      SELECT DISTINCT
-        v.id,
-        v.numero_factura,
-        v.fecha,
-        v.total,
-        c.nombre AS cliente_nombre,
-        pv.nombre AS punto_venta_nombre,
-        v.anulada,
-        GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres
-      FROM ventas v
-      LEFT JOIN clientes c ON v.cliente_id = c.id
-      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
-      LEFT JOIN productos p ON dv.producto_id = p.id
-      WHERE (v.numero_factura LIKE ? OR c.nombre LIKE ? OR p.nombre LIKE ? OR p.codigo LIKE ?)
-      GROUP BY v.id, v.numero_factura, v.fecha, v.total, c.nombre, pv.nombre, v.anulada
-      ORDER BY v.fecha DESC
-      LIMIT ?
-    `
+    const sql = `SELECT DISTINCT v.id, v.numero_factura, v.fecha, v.total, c.nombre AS cliente_nombre, pv.nombre AS punto_venta_nombre, v.anulada, GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id JOIN puntos_venta pv ON v.punto_venta_id = pv.id LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id LEFT JOIN productos p ON dv.producto_id = p.id WHERE (v.numero_factura LIKE ? OR c.nombre LIKE ? OR p.nombre LIKE ? OR p.codigo LIKE ?) GROUP BY v.id, v.numero_factura, v.fecha, v.total, c.nombre, pv.nombre, v.anulada ORDER BY v.fecha DESC LIMIT ?`
 
     const searchPattern = `%${q}%`
     const [ventas] = await pool.query(sql, [
@@ -414,28 +383,7 @@ export const searchVentasByProducto = async (req, res) => {
       return res.json([])
     }
 
-    const sql = `
-      SELECT DISTINCT
-        v.id,
-        v.numero_factura,
-        v.fecha,
-        v.total,
-        c.nombre AS cliente_nombre,
-        pv.nombre AS punto_venta_nombre,
-        v.anulada,
-        p.nombre AS producto_nombre,
-        p.codigo AS producto_codigo,
-        dv.cantidad,
-        dv.precio_con_descuento
-      FROM ventas v
-      LEFT JOIN clientes c ON v.cliente_id = c.id
-      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      JOIN detalle_ventas dv ON v.id = dv.venta_id
-      JOIN productos p ON dv.producto_id = p.id
-      WHERE (p.nombre LIKE ? OR p.codigo LIKE ?)
-      ORDER BY v.fecha DESC, p.nombre ASC
-      LIMIT ?
-    `
+    const sql = `SELECT DISTINCT v.id, v.numero_factura, v.fecha, v.total, c.nombre AS cliente_nombre, pv.nombre AS punto_venta_nombre, v.anulada, p.nombre AS producto_nombre, p.codigo AS producto_codigo, dv.cantidad, dv.precio_con_descuento FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id JOIN puntos_venta pv ON v.punto_venta_id = pv.id JOIN detalle_ventas dv ON v.id = dv.venta_id JOIN productos p ON dv.producto_id = p.id WHERE (p.nombre LIKE ? OR p.codigo LIKE ?) ORDER BY v.fecha DESC, p.nombre ASC LIMIT ?`
 
     const searchPattern = `%${producto_query}%`
     const [ventas] = await pool.query(sql, [searchPattern, searchPattern, Number.parseInt(limit)])
@@ -447,40 +395,125 @@ export const searchVentasByProducto = async (req, res) => {
   }
 }
 
+// NUEVA FUNCIÓN: Obtener total sum of filtered sales without pagination
+export const getTotalVentasFiltradas = async (req, res) => {
+  try {
+    const {
+      fecha_inicio,
+      fecha_fin,
+      cliente_id,
+      punto_venta_id,
+      anuladas,
+      search,
+      producto_id,
+      producto_nombre,
+      tipo_pago,
+    } = req.query
+
+    // Consulta para obtener el total de ventas filtradas
+    let sql = `
+      SELECT 
+        COUNT(DISTINCT v.id) as cantidad_ventas,
+        COALESCE(SUM(DISTINCT v.total), 0) as total_monto
+      FROM ventas v
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      JOIN usuarios u ON v.usuario_id = u.id
+      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+      LEFT JOIN productos p ON dv.producto_id = p.id
+      LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
+      WHERE 1=1
+    `
+
+    const params = []
+
+    // Aplicar los mismos filtros que en getVentasPaginadas
+    if (fecha_inicio) {
+      sql += ` AND DATE(v.fecha) >= ?`
+      params.push(fecha_inicio)
+    }
+
+    if (fecha_fin) {
+      sql += ` AND DATE(v.fecha) <= ?`
+      params.push(fecha_fin)
+    }
+
+    if (cliente_id) {
+      sql += ` AND v.cliente_id = ?`
+      params.push(cliente_id)
+    }
+
+    if (punto_venta_id) {
+      sql += ` AND v.punto_venta_id = ?`
+      params.push(punto_venta_id)
+    }
+
+    if (anuladas !== undefined) {
+      const anuladaValue = anuladas === "true" ? 1 : 0
+      sql += ` AND v.anulada = ?`
+      params.push(anuladaValue)
+    }
+
+    if (tipo_pago && tipo_pago !== "todos") {
+      sql += ` AND (
+        (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR
+        (v.tipo_pago = 'Múltiple' AND EXISTS (
+          SELECT 1 FROM pagos pg2 
+          WHERE pg2.referencia_id = v.id 
+          AND pg2.tipo_referencia = 'venta' 
+          AND pg2.anulado = 0 
+          AND pg2.tipo_pago = ?
+        ))
+      )`
+      params.push(tipo_pago, tipo_pago)
+    }
+
+    if (producto_id) {
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv2 
+        WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
+      )`
+      params.push(producto_id)
+    }
+
+    if (producto_nombre) {
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv3 
+        JOIN productos p3 ON dv3.producto_id = p3.id
+        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+      )`
+      const searchPattern = `%${producto_nombre}%`
+      params.push(searchPattern, searchPattern)
+    }
+
+    if (search) {
+      sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
+      const searchPattern = `%${search}%`
+      params.push(searchPattern, searchPattern, searchPattern)
+    }
+
+    const [result] = await pool.query(sql, params)
+    const totales = result[0]
+
+    res.json({
+      cantidad_ventas: totales.cantidad_ventas || 0,
+      total_monto: totales.total_monto || 0,
+    })
+  } catch (error) {
+    console.error("Error al obtener total de ventas filtradas:", error)
+    res.status(500).json({
+      message: "Error al obtener total de ventas filtradas",
+      error: error.message,
+    })
+  }
+}
+
 // Resto de funciones existentes...
 export const getVentas = async (req, res) => {
   try {
     const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas } = req.query
 
-    let sql = `
-      SELECT 
-        v.id, 
-        v.numero_factura, 
-        v.fecha, 
-        v.subtotal, 
-        v.porcentaje_interes,
-        v.monto_interes,
-        v.porcentaje_descuento,
-        v.monto_descuento,
-        v.total,
-        v.anulada,
-        v.fecha_anulacion,
-        v.motivo_anulacion,
-        v.tiene_devoluciones,
-        c.id AS cliente_id,
-        c.nombre AS cliente_nombre,
-        c.telefono AS cliente_telefono,
-        u.id AS usuario_id,
-        u.nombre AS usuario_nombre,
-        pv.id AS punto_venta_id,
-        pv.nombre AS punto_venta_nombre,
-        v.tipo_pago AS tipo_pago_nombre
-      FROM ventas v
-      LEFT JOIN clientes c ON v.cliente_id = c.id
-      JOIN usuarios u ON v.usuario_id = u.id
-      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      WHERE 1=1
-    `
+    let sql = `SELECT v.id, v.numero_factura, v.fecha, v.subtotal, v.porcentaje_interes, v.monto_interes, v.porcentaje_descuento, v.monto_descuento, v.total, v.anulada, v.fecha_anulacion, v.motivo_anulacion, v.tiene_devoluciones, c.id AS cliente_id, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono, u.id AS usuario_id, u.nombre AS usuario_nombre, pv.id AS punto_venta_id, pv.nombre AS punto_venta_nombre, v.tipo_pago AS tipo_pago_nombre FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id JOIN usuarios u ON v.usuario_id = u.id JOIN puntos_venta pv ON v.punto_venta_id = pv.id WHERE 1=1`
 
     const params = []
 
@@ -544,35 +577,7 @@ export const getVentaById = async (req, res) => {
 
     // Obtener la información de la venta
     const [ventas] = await pool.query(
-      `
-      SELECT 
-        v.id, 
-        v.numero_factura, 
-        v.fecha, 
-        v.subtotal, 
-        v.porcentaje_interes,
-        v.monto_interes,
-        v.porcentaje_descuento,
-        v.monto_descuento,
-        v.total,
-        v.anulada,
-        v.fecha_anulacion,
-        v.motivo_anulacion,
-        v.tiene_devoluciones,
-        v.cliente_id,
-        v.usuario_id,
-        v.punto_venta_id,
-        v.tipo_pago AS tipo_pago_nombre,
-        COALESCE(c.nombre, NULL) AS cliente_nombre,
-        COALESCE(c.telefono, NULL) AS cliente_telefono,
-        COALESCE(u.nombre, 'Usuario eliminado') AS usuario_nombre,
-        COALESCE(pv.nombre, 'Punto de venta eliminado') AS punto_venta_nombre
-      FROM ventas v
-      LEFT JOIN clientes c ON v.cliente_id = c.id
-      LEFT JOIN usuarios u ON v.usuario_id = u.id
-      LEFT JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      WHERE v.id = ?
-      `,
+      `SELECT v.id, v.numero_factura, v.fecha, v.subtotal, v.porcentaje_interes, v.monto_interes, v.porcentaje_descuento, v.monto_descuento, v.total, v.anulada, v.fecha_anulacion, v.motivo_anulacion, v.tiene_devoluciones, v.cliente_id, v.usuario_id, v.punto_venta_id, v.tipo_pago AS tipo_pago_nombre, COALESCE(c.nombre, NULL) AS cliente_nombre, COALESCE(c.telefono, NULL) AS cliente_telefono, COALESCE(u.nombre, 'Usuario eliminado') AS usuario_nombre, COALESCE(pv.nombre, 'Punto de venta eliminado') AS punto_venta_nombre FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id LEFT JOIN usuarios u ON v.usuario_id = u.id LEFT JOIN puntos_venta pv ON v.punto_venta_id = pv.id WHERE v.id = ?`,
       [ventaId],
     )
 
@@ -584,51 +589,14 @@ export const getVentaById = async (req, res) => {
 
     // Obtener el detalle de la venta
     const [detalles] = await pool.query(
-      `
-      SELECT 
-        dv.id,
-        dv.producto_id,
-        COALESCE(p.codigo, 'N/A') AS producto_codigo,
-        COALESCE(p.nombre, 'Producto eliminado') AS producto_nombre,
-        dv.cantidad,
-        dv.precio_unitario,
-        dv.precio_con_descuento,
-        dv.subtotal,
-        COALESCE(dv.devuelto, 0) AS devuelto,
-        COALESCE(dv.es_reemplazo, 0) AS es_reemplazo,
-        dv.devolucion_id,
-        dv.fecha_devolucion,
-        COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
-      FROM detalle_ventas dv
-      LEFT JOIN productos p ON dv.producto_id = p.id
-      LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id 
-        AND dd.devolucion_id IN (
-          SELECT id FROM devoluciones WHERE venta_id = ? AND COALESCE(anulada, 0) = 0
-        )
-      WHERE dv.venta_id = ?
-      GROUP BY dv.id, dv.producto_id, p.codigo, p.nombre, dv.cantidad, 
-               dv.precio_unitario, dv.precio_con_descuento, dv.subtotal, 
-               dv.devuelto, dv.es_reemplazo, dv.devolucion_id, dv.fecha_devolucion
-      ORDER BY dv.id
-      `,
+      `SELECT dv.id, dv.producto_id, COALESCE(p.codigo, 'N/A') AS producto_codigo, COALESCE(p.nombre, 'Producto eliminado') AS producto_nombre, dv.cantidad, dv.precio_unitario, dv.precio_con_descuento, dv.subtotal, COALESCE(dv.devuelto, 0) AS devuelto, COALESCE(dv.es_reemplazo, 0) AS es_reemplazo, dv.devolucion_id, dv.fecha_devolucion, COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta FROM detalle_ventas dv LEFT JOIN productos p ON dv.producto_id = p.id LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id AND dd.devolucion_id IN (SELECT id FROM devoluciones WHERE venta_id = ? AND COALESCE(anulada, 0) = 0) WHERE dv.venta_id = ? GROUP BY dv.id, dv.producto_id, p.codigo, p.nombre, dv.cantidad, dv.precio_unitario, dv.precio_con_descuento, dv.subtotal, dv.devuelto, dv.es_reemplazo, dv.devolucion_id, dv.fecha_devolucion ORDER BY dv.id`,
       [ventaId, ventaId],
     )
     venta.detalles = detalles || []
 
     // CORREGIDO: Obtener los pagos asociados a esta venta con mejor información
     const [pagos] = await pool.query(
-      `
-      SELECT 
-        p.id,
-        p.monto,
-        p.fecha,
-        COALESCE(p.anulado, 0) AS anulado,
-        p.tipo_pago AS tipo_pago_nombre,
-        p.notas
-      FROM pagos p
-      WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta'
-      ORDER BY p.fecha DESC
-      `,
+      `SELECT p.id, p.monto, p.fecha, COALESCE(p.anulado, 0) AS anulado, p.tipo_pago AS tipo_pago_nombre, p.notas FROM pagos p WHERE p.referencia_id = ? AND p.tipo_referencia = 'venta' ORDER BY p.fecha DESC`,
       [ventaId],
     )
     venta.pagos = pagos || []
@@ -768,11 +736,7 @@ export const createVenta = async (req, res) => {
     const tipoPagoDisplay = pagos.length > 1 ? "Múltiple" : pagos[0].tipo_pago
 
     const [resultVenta] = await connection.query(
-      `INSERT INTO ventas (
-        numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago,
-        subtotal, porcentaje_interes, monto_interes, porcentaje_descuento, monto_descuento, total,
-        tiene_devoluciones, fecha
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ventas (numero_factura, cliente_id, usuario_id, punto_venta_id, tipo_pago, subtotal, porcentaje_interes, monto_interes, porcentaje_descuento, monto_descuento, total, tiene_devoluciones, fecha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         numeroFactura,
         clienteId,
@@ -799,10 +763,7 @@ export const createVenta = async (req, res) => {
       }
 
       await connection.query(
-        `INSERT INTO detalle_ventas (
-          venta_id, producto_id, cantidad, precio_unitario, precio_con_descuento, subtotal,
-          devuelto, es_reemplazo
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO detalle_ventas (venta_id, producto_id, cantidad, precio_unitario, precio_con_descuento, subtotal, devuelto, es_reemplazo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           ventaId,
           producto.id,
@@ -890,10 +851,11 @@ export const anularVenta = async (req, res) => {
     // Revertir stock de productos
     const [detalles] = await connection.query("SELECT * FROM detalle_ventas WHERE venta_id = ?", [id])
     for (const detalle of detalles) {
-      await connection.query(
-        "UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?",
-        [detalle.cantidad, detalle.producto_id, venta.punto_venta_id],
-      )
+      await connection.query("UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?", [
+        detalle.cantidad,
+        detalle.producto_id,
+        venta.punto_venta_id,
+      ])
     }
 
     // Anular pagos asociados y revertir movimientos de cuenta corriente
@@ -931,10 +893,7 @@ export const anularVenta = async (req, res) => {
 
           // Registrar el movimiento de reversión (como un cargo)
           await connection.query(
-            `INSERT INTO movimientos_cuenta_corriente (
-              cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, 
-              referencia_id, tipo_referencia, usuario_id, notas, fecha
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, usuario_id, notas, fecha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               cuenta.id,
               "pago", // Revertir un pago es un nuevo cargo a la deuda
@@ -1017,53 +976,19 @@ export const getEstadisticasVentas = async (req, res) => {
 
     // CORREGIDO: Ventas por tipo de pago mejorado
     const [ventasPorMetodo] = await pool.query(
-      `SELECT 
-        CASE 
-          WHEN v.tipo_pago = 'Múltiple' THEN 'Múltiple'
-          ELSE v.tipo_pago
-        END as tipo_pago, 
-        COUNT(v.id) as cantidad, 
-        SUM(v.total) as monto 
-      FROM ventas v
-      ${whereClause}
-      GROUP BY 
-        CASE 
-          WHEN v.tipo_pago = 'Múltiple' THEN 'Múltiple'
-          ELSE v.tipo_pago
-        END
-      ORDER BY monto DESC`,
+      `SELECT CASE WHEN v.tipo_pago = 'Múltiple' THEN 'Múltiple' ELSE v.tipo_pago END as tipo_pago, COUNT(v.id) as cantidad, SUM(v.total) as monto FROM ventas v ${whereClause} GROUP BY CASE WHEN v.tipo_pago = 'Múltiple' THEN 'Múltiple' ELSE v.tipo_pago END ORDER BY monto DESC`,
       params,
     )
 
     // Ventas por punto de venta
     const [ventasPorPunto] = await pool.query(
-      `SELECT 
-        pv.nombre as punto_venta, 
-        COUNT(v.id) as cantidad, 
-        SUM(v.total) as monto 
-      FROM ventas v
-      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
-      ${whereClause}
-      GROUP BY v.punto_venta_id
-      ORDER BY monto DESC`,
+      `SELECT pv.nombre as punto_venta, COUNT(v.id) as cantidad, SUM(v.total) as monto FROM ventas v JOIN puntos_venta pv ON v.punto_venta_id = pv.id ${whereClause} GROUP BY v.punto_venta_id ORDER BY monto DESC`,
       params,
     )
 
     // Productos más vendidos
     const [productosMasVendidos] = await pool.query(
-      `SELECT 
-        p.id,
-        p.codigo,
-        p.nombre,
-        SUM(dv.cantidad) as cantidad_vendida,
-        SUM(dv.subtotal) as monto_total
-      FROM detalle_ventas dv
-      JOIN productos p ON dv.producto_id = p.id
-      JOIN ventas v ON dv.venta_id = v.id
-      ${whereClause}
-      GROUP BY dv.producto_id
-      ORDER BY cantidad_vendida DESC
-      LIMIT 10`,
+      `SELECT p.id, p.codigo, p.nombre, SUM(dv.cantidad) as cantidad_vendida, SUM(dv.subtotal) as monto_total FROM detalle_ventas dv JOIN productos p ON dv.producto_id = p.id JOIN ventas v ON dv.venta_id = v.id ${whereClause} GROUP BY dv.producto_id ORDER BY cantidad_vendida DESC LIMIT 10`,
       params,
     )
 
@@ -1095,16 +1020,7 @@ export const getDevolucionesByVenta = async (req, res) => {
 
     // Obtener las devoluciones de la venta
     const [devoluciones] = await pool.query(
-      `
-      SELECT d.*, 
-             u.nombre AS usuario_nombre,
-             c.nombre AS cliente_nombre
-      FROM devoluciones d
-      LEFT JOIN usuarios u ON d.usuario_id = u.id
-      LEFT JOIN clientes c ON d.cliente_id = c.id
-      WHERE d.venta_id = ? AND d.anulada = 0
-      ORDER BY d.fecha DESC
-    `,
+      `SELECT d.*, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre FROM devoluciones d LEFT JOIN usuarios u ON d.usuario_id = u.id LEFT JOIN clientes c ON d.cliente_id = c.id WHERE d.venta_id = ? AND d.anulada = 0 ORDER BY d.fecha DESC`,
       [id],
     )
 
@@ -1112,23 +1028,13 @@ export const getDevolucionesByVenta = async (req, res) => {
     for (const devolucion of devoluciones) {
       // Obtener productos devueltos
       const [productosDevueltos] = await pool.query(
-        `
-        SELECT dd.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre
-        FROM detalle_devoluciones dd
-        JOIN productos p ON dd.producto_id = p.id
-        WHERE dd.devolucion_id = ?
-      `,
+        `SELECT dd.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre FROM detalle_devoluciones dd JOIN productos p ON dd.producto_id = p.id WHERE dd.devolucion_id = ?`,
         [devolucion.id],
       )
 
       // Obtener productos de reemplazo
       const [productosReemplazo] = await pool.query(
-        `
-        SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre
-        FROM detalle_reemplazos dr
-        JOIN productos p ON dr.producto_id = p.id
-        WHERE dr.devolucion_id = ?
-      `,
+        `SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre FROM detalle_reemplazos dr JOIN productos p ON dr.producto_id = p.id WHERE dr.devolucion_id = ?`,
         [devolucion.id],
       )
 
