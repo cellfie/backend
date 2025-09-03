@@ -418,8 +418,8 @@ export const getTotalVentasFiltradas = async (req, res) => {
             WHEN v.tipo_pago = ? AND v.tipo_pago != 'Múltiple' THEN v.total
             WHEN v.tipo_pago = 'Múltiple' THEN (
               SELECT COALESCE(SUM(vp.monto), 0) 
-              FROM venta_pagos vp 
-              WHERE vp.venta_id = v.id AND vp.tipo_pago = ?
+              FROM pagos vp 
+              WHERE vp.referencia_id = v.id AND vp.tipo_pago = ?
             )
             ELSE 0
           END), 0) as total_monto
@@ -465,8 +465,8 @@ export const getTotalVentasFiltradas = async (req, res) => {
       sql += ` AND (
         (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR
         (v.tipo_pago = 'Múltiple' AND EXISTS (
-          SELECT 1 FROM venta_pagos vp2 
-          WHERE vp2.venta_id = v.id 
+          SELECT 1 FROM pagos vp2 
+          WHERE vp2.referencia_id = v.id 
           AND vp2.tipo_pago = ?
         ))
       )`
