@@ -411,11 +411,10 @@ export const getTotalVentasFiltradas = async (req, res) => {
     } = req.query
 
     if (tipo_pago && tipo_pago !== "todos") {
-      // Special query for payment method filtering - sum only the filtered payment amounts
       let sql = `
         SELECT 
           COUNT(DISTINCT v.id) as cantidad_ventas,
-          COALESCE(SUM(CASE 
+          COALESCE(SUM(DISTINCT CASE 
             WHEN v.tipo_pago = ? AND v.tipo_pago != 'Múltiple' THEN v.total
             WHEN v.tipo_pago = 'Múltiple' THEN (
               SELECT COALESCE(SUM(vp.monto), 0) 
@@ -430,7 +429,6 @@ export const getTotalVentasFiltradas = async (req, res) => {
         JOIN puntos_venta pv ON v.punto_venta_id = pv.id
         LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
         LEFT JOIN productos p ON dv.producto_id = p.id
-        LEFT JOIN pagos vp ON v.id = vp.referencia_id
         WHERE 1=1
       `
 
