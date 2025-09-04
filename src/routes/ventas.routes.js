@@ -55,7 +55,7 @@ const validateAnulacion = [check("motivo").notEmpty().withMessage("El motivo de 
 // Rutas
 router.get("/", verifyToken(["admin", "empleado"]), getVentas)
 router.get("/paginadas", verifyToken(["admin", "empleado"]), getVentasPaginadas)
-router.get("/total-filtradas", verifyToken(["admin", "empleado"]), getTotalVentasFiltradas) // AGREGADO: Nueva ruta para totales filtrados
+router.get("/total-filtradas", verifyToken(["admin", "empleado"]), getTotalVentasFiltradas)
 router.get("/metodos-pago", verifyToken(["admin", "empleado"]), getMetodosPagoVentas)
 router.get("/search-rapido", verifyToken(["admin", "empleado"]), searchVentasRapido)
 router.get("/search-by-producto", verifyToken(["admin", "empleado"]), searchVentasByProducto)
