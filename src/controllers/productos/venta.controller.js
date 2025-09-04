@@ -395,6 +395,7 @@ export const searchVentasByProducto = async (req, res) => {
   }
 }
 
+// NUEVO: Obtener totales filtrados considerando pagos múltiples (corregido)
 export const getTotalVentasFiltradas = async (req, res) => {
   try {
     const {
@@ -403,28 +404,45 @@ export const getTotalVentasFiltradas = async (req, res) => {
       cliente_id,
       punto_venta_id,
       anuladas,
+      search,
+      producto_id,
+      producto_nombre,
       tipo_pago,
     } = req.query;
 
+    // Construimos la subconsulta agregada de pagos (si se filtra por tipo, la limitamos)
+    // IMPORTANTE: los placeholders (?) deben empujarse en el mismo orden en 'params'
     let sql = `
-      SELECT 
+      SELECT
         COUNT(DISTINCT v.id) AS cantidad_ventas,
-        SUM(
-          CASE 
-            WHEN v.tipo_pago != 'Múltiple' THEN v.total
-            ELSE COALESCE(SUM(pg.monto),0)
+        COALESCE(SUM(
+          CASE
+            WHEN v.tipo_pago IS NOT NULL AND v.tipo_pago != 'Múltiple' THEN v.total
+            ELSE COALESCE(pg_total.pagos_total, 0)
           END
-        ) AS total_monto
+        ),0) AS total_monto
       FROM ventas v
-      LEFT JOIN pagos pg 
-        ON v.id = pg.referencia_id 
-        AND pg.tipo_referencia = 'venta'
-        AND pg.anulado = 0
+      LEFT JOIN (
+        SELECT referencia_id, SUM(monto) AS pagos_total
+        FROM pagos
+        WHERE tipo_referencia = 'venta' AND anulado = 0
+        ${tipo_pago && tipo_pago !== "todos" ? " AND tipo_pago = ?" : ""}
+        GROUP BY referencia_id
+      ) AS pg_total ON pg_total.referencia_id = v.id
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      JOIN usuarios u ON v.usuario_id = u.id
+      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
       WHERE 1=1
     `;
 
     const params = [];
 
+    // Si la subconsulta llevó un placeholder (tipo_pago), debemos agregar su valor primero
+    if (tipo_pago && tipo_pago !== "todos") {
+      params.push(tipo_pago); // para el placeholder dentro de la subconsulta pg_total
+    }
+
+    // Filtros comunes (fechas, cliente, punto, anuladas)
     if (fecha_inicio) {
       sql += ` AND DATE(v.fecha) >= ?`;
       params.push(fecha_inicio);
@@ -446,28 +464,56 @@ export const getTotalVentasFiltradas = async (req, res) => {
       params.push(anuladas === "true" ? 1 : 0);
     }
 
-    // Filtro por tipo de pago
+    // Búsqueda por producto (si aplica) - mantenemos la lógica de existencia por detalle_ventas
+    if (producto_id) {
+      sql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv2 WHERE dv2.venta_id = v.id AND dv2.producto_id = ?)`;
+      params.push(producto_id);
+    }
+
+    if (producto_nombre) {
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv3
+        JOIN productos p3 ON dv3.producto_id = p3.id
+        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+      )`;
+      const searchPattern = `%${producto_nombre}%`;
+      params.push(searchPattern, searchPattern);
+    }
+
+    // Búsqueda general
+    if (search) {
+      const searchPattern = `%${search}%`;
+      sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`;
+      params.push(searchPattern, searchPattern, searchPattern);
+    }
+
+    // Filtro por tipo de pago: mantener la misma lógica que getVentasPaginadas
     if (tipo_pago && tipo_pago !== "todos") {
+      // Notar: aquí agregamos dos placeholders más (uno para la comparación directa y otro para el EXISTS)
       sql += ` AND (
         (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple')
-        OR (v.tipo_pago = 'Múltiple' AND pg.tipo_pago = ?)
+        OR (v.tipo_pago = 'Múltiple' AND EXISTS (
+          SELECT 1 FROM pagos pg2
+          WHERE pg2.referencia_id = v.id
+            AND pg2.tipo_referencia = 'venta'
+            AND pg2.anulado = 0
+            AND pg2.tipo_pago = ?
+        ))
       )`;
       params.push(tipo_pago, tipo_pago);
     }
 
-    // Agrupamos para que SUM(pg.monto) funcione sin error
-    sql += ` GROUP BY v.id`;
-
+    // Ejecutar consulta: devuelve una sola fila con cantidad_ventas y total_monto agregados
     const [rows] = await pool.query(sql, params);
 
-    const totalMonto = rows.reduce((acc, row) => acc + Number(row.total_monto || 0), 0);
-    const cantidadVentas = rows.length;
+    // rows puede ser [] si no hay coincidencias; manejamos safe
+    const resultRow = (rows && rows[0]) || { cantidad_ventas: 0, total_monto: 0 };
 
     res.json({
-      total_monto: totalMonto,
-      cantidad_ventas: cantidadVentas,
+      total_monto: Number(resultRow.total_monto) || 0,
+      cantidad_ventas: Number(resultRow.cantidad_ventas) || 0,
       debug: {
-        appliedFilters: { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas, tipo_pago },
+        appliedFilters: { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas, tipo_pago, producto_id, producto_nombre, search },
         finalQuery: sql,
         params,
       },
