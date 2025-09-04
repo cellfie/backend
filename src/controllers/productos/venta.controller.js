@@ -410,7 +410,6 @@ export const getTotalVentasFiltradas = async (req, res) => {
       tipo_pago,
     } = req.query;
 
-    // Consulta para sumar correctamente
     let sql = `
       SELECT 
         COUNT(DISTINCT v.id) AS cantidad_ventas,
@@ -436,6 +435,7 @@ export const getTotalVentasFiltradas = async (req, res) => {
 
     const params = [];
 
+    // Fechas
     if (fecha_inicio) {
       sql += ` AND DATE(v.fecha) >= ?`;
       params.push(fecha_inicio);
@@ -444,6 +444,7 @@ export const getTotalVentasFiltradas = async (req, res) => {
       sql += ` AND DATE(v.fecha) <= ?`;
       params.push(fecha_fin);
     }
+
     if (cliente_id) {
       sql += ` AND v.cliente_id = ?`;
       params.push(cliente_id);
@@ -457,7 +458,7 @@ export const getTotalVentasFiltradas = async (req, res) => {
       params.push(anuladas === "true" ? 1 : 0);
     }
 
-    // Filtro por tipo_pago (tanto en ventas simples como múltiples)
+    // Filtro por tipo de pago (VENTAS simples o múltiples)
     if (tipo_pago && tipo_pago !== "todos") {
       sql += ` AND (
         (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple')
@@ -479,6 +480,8 @@ export const getTotalVentasFiltradas = async (req, res) => {
       cantidad_ventas: result[0].cantidad_ventas || 0,
       debug: {
         appliedFilters: { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas, tipo_pago },
+        finalQuery: sql,
+        params,
       },
     });
   } catch (error) {
