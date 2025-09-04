@@ -395,7 +395,6 @@ export const searchVentasByProducto = async (req, res) => {
   }
 }
 
-// NUEVO: Obtener totales filtrados considerando pagos múltiples
 export const getTotalVentasFiltradas = async (req, res) => {
   try {
     const {
@@ -404,9 +403,6 @@ export const getTotalVentasFiltradas = async (req, res) => {
       cliente_id,
       punto_venta_id,
       anuladas,
-      search,
-      producto_id,
-      producto_nombre,
       tipo_pago,
     } = req.query;
 
@@ -416,26 +412,19 @@ export const getTotalVentasFiltradas = async (req, res) => {
         SUM(
           CASE 
             WHEN v.tipo_pago != 'Múltiple' THEN v.total
-            ELSE (
-              SELECT COALESCE(SUM(pg.monto),0) 
-              FROM pagos pg 
-              WHERE pg.referencia_id = v.id 
-              AND pg.tipo_referencia = 'venta'
-              AND pg.anulado = 0
-              ${tipo_pago && tipo_pago !== "todos" ? " AND pg.tipo_pago = ?" : ""}
-            )
+            ELSE COALESCE(SUM(pg.monto),0)
           END
         ) AS total_monto
       FROM ventas v
-      LEFT JOIN clientes c ON v.cliente_id = c.id
-      JOIN usuarios u ON v.usuario_id = u.id
-      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      LEFT JOIN pagos pg 
+        ON v.id = pg.referencia_id 
+        AND pg.tipo_referencia = 'venta'
+        AND pg.anulado = 0
       WHERE 1=1
     `;
 
     const params = [];
 
-    // Fechas
     if (fecha_inicio) {
       sql += ` AND DATE(v.fecha) >= ?`;
       params.push(fecha_inicio);
@@ -444,7 +433,6 @@ export const getTotalVentasFiltradas = async (req, res) => {
       sql += ` AND DATE(v.fecha) <= ?`;
       params.push(fecha_fin);
     }
-
     if (cliente_id) {
       sql += ` AND v.cliente_id = ?`;
       params.push(cliente_id);
@@ -458,26 +446,26 @@ export const getTotalVentasFiltradas = async (req, res) => {
       params.push(anuladas === "true" ? 1 : 0);
     }
 
-    // Filtro por tipo de pago (VENTAS simples o múltiples)
+    // Filtro por tipo de pago
     if (tipo_pago && tipo_pago !== "todos") {
       sql += ` AND (
         (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple')
-        OR (v.tipo_pago = 'Múltiple' AND EXISTS (
-          SELECT 1 FROM pagos pg2 
-          WHERE pg2.referencia_id = v.id 
-          AND pg2.tipo_referencia = 'venta'
-          AND pg2.anulado = 0
-          AND pg2.tipo_pago = ?
-        ))
+        OR (v.tipo_pago = 'Múltiple' AND pg.tipo_pago = ?)
       )`;
       params.push(tipo_pago, tipo_pago);
     }
 
-    const [result] = await pool.query(sql, params);
+    // Agrupamos para que SUM(pg.monto) funcione sin error
+    sql += ` GROUP BY v.id`;
+
+    const [rows] = await pool.query(sql, params);
+
+    const totalMonto = rows.reduce((acc, row) => acc + Number(row.total_monto || 0), 0);
+    const cantidadVentas = rows.length;
 
     res.json({
-      total_monto: result[0].total_monto || 0,
-      cantidad_ventas: result[0].cantidad_ventas || 0,
+      total_monto: totalMonto,
+      cantidad_ventas: cantidadVentas,
       debug: {
         appliedFilters: { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas, tipo_pago },
         finalQuery: sql,
@@ -489,6 +477,7 @@ export const getTotalVentasFiltradas = async (req, res) => {
     res.status(500).json({ message: "Error al obtener totales filtrados", error: error.message });
   }
 };
+
 
 
 // Resto de funciones existentes...
