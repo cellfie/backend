@@ -414,15 +414,20 @@ export const getTotalVentasFiltradas = async (req, res) => {
       let sql = `
         SELECT 
           COUNT(DISTINCT v.id) as cantidad_ventas,
-          COALESCE(SUM(DISTINCT CASE 
-            WHEN v.tipo_pago = ? AND v.tipo_pago != 'Múltiple' THEN v.total
-            WHEN v.tipo_pago = 'Múltiple' THEN (
-              SELECT COALESCE(SUM(vp.monto), 0) 
-              FROM pagos vp 
-              WHERE vp.referencia_id = v.id AND vp.tipo_pago = ?
-            )
-            ELSE 0
-          END), 0) as total_monto
+          COALESCE(SUM(
+            CASE 
+              WHEN v.tipo_pago = ? AND v.tipo_pago != 'Múltiple' THEN v.total
+              WHEN v.tipo_pago = 'Múltiple' THEN (
+                SELECT COALESCE(SUM(vp.monto), 0) 
+                FROM pagos vp 
+                WHERE vp.referencia_id = v.id 
+                AND vp.tipo_referencia = 'venta'
+                AND vp.anulado = 0
+                AND vp.tipo_pago = ?
+              )
+              ELSE 0
+            END
+          ), 0) as total_monto
         FROM ventas v
         LEFT JOIN clientes c ON v.cliente_id = c.id
         JOIN usuarios u ON v.usuario_id = u.id
@@ -467,6 +472,8 @@ export const getTotalVentasFiltradas = async (req, res) => {
         (v.tipo_pago = 'Múltiple' AND EXISTS (
           SELECT 1 FROM pagos vp2 
           WHERE vp2.referencia_id = v.id 
+          AND vp2.tipo_referencia = 'venta'
+          AND vp2.anulado = 0
           AND vp2.tipo_pago = ?
         ))
       )`
@@ -502,6 +509,11 @@ export const getTotalVentasFiltradas = async (req, res) => {
       res.json({
         cantidad_ventas: totales.cantidad_ventas || 0,
         total_monto: totales.total_monto || 0,
+        debug: {
+          tipo_pago_filtrado: tipo_pago,
+          sql_usado: "consulta_con_filtro_pago",
+          params_count: params.length,
+        },
       })
     } else {
       // Original query for when no payment method filter is applied
@@ -581,11 +593,19 @@ export const getTotalVentasFiltradas = async (req, res) => {
       res.json({
         cantidad_ventas: totales.cantidad_ventas || 0,
         total_monto: totales.total_monto || 0,
+        debug: {
+          tipo_pago_filtrado: "todos",
+          sql_usado: "consulta_sin_filtro_pago",
+          params_count: params.length,
+        },
       })
     }
   } catch (error) {
     console.error("Error al obtener totales filtrados:", error)
-    res.status(500).json({ error: "Error interno del servidor" })
+    res.status(500).json({
+      message: "Error al obtener totales filtrados",
+      error: error.message,
+    })
   }
 }
 
