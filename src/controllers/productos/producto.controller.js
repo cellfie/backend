@@ -16,6 +16,20 @@ const ensurePriceIsNumber = (price) => {
   return 0 // Valor por defecto si no se puede convertir
 }
 
+const verificarCodigoDuplicado = async (connection, codigo, punto_venta_id, productoId = null) => {
+  let query = "SELECT id FROM productos WHERE codigo = ? AND punto_venta_id = ?"
+  const params = [codigo, punto_venta_id]
+
+  // Si estamos actualizando, excluir el producto actual
+  if (productoId) {
+    query += " AND id != ?"
+    params.push(productoId)
+  }
+
+  const [productos] = await connection.query(query, params)
+  return productos.length > 0
+}
+
 // NUEVA FUNCIÓN: Obtener productos con paginación y optimización
 export const getProductosPaginados = async (req, res) => {
   try {
@@ -37,12 +51,11 @@ export const getProductosPaginados = async (req, res) => {
 
     const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
 
-    // Construir la consulta base con JOINs optimizados
     let baseQuery = `
       FROM productos p
       LEFT JOIN categorias c ON p.categoria_id = c.id AND (c.activo = 1 OR c.activo IS NULL)
-      LEFT JOIN inventario i ON p.id = i.producto_id
-      LEFT JOIN puntos_venta pv ON i.punto_venta_id = pv.id
+      LEFT JOIN inventario i ON p.id = i.producto_id AND p.punto_venta_id = i.punto_venta_id
+      LEFT JOIN puntos_venta pv ON p.punto_venta_id = pv.id
       LEFT JOIN (
         SELECT 
           producto_id,
@@ -81,7 +94,7 @@ export const getProductosPaginados = async (req, res) => {
     }
 
     if (punto_venta_id) {
-      baseQuery += ` AND i.punto_venta_id = ?`
+      baseQuery += ` AND p.punto_venta_id = ?`
       params.push(punto_venta_id)
     }
 
@@ -121,7 +134,6 @@ export const getProductosPaginados = async (req, res) => {
     const [countResult] = await pool.query(countQuery, params)
     const total = countResult[0].total
 
-    // Consulta principal con todos los datos necesarios
     const dataQuery = `
       SELECT DISTINCT
         p.id, 
@@ -134,7 +146,7 @@ export const getProductosPaginados = async (req, res) => {
         c.nombre AS categoria,
         c.id AS categoria_id,
         COALESCE(i.stock, 0) AS stock,
-        pv.id AS punto_venta_id,
+        p.punto_venta_id,
         pv.nombre AS punto_venta,
         desc_activo.id AS descuento_id,
         desc_activo.porcentaje AS descuento_porcentaje,
@@ -198,9 +210,12 @@ export const searchProductosRapido = async (req, res) => {
         p.codigo,
         p.nombre,
         p.precio,
+        p.punto_venta_id,
+        pv.nombre AS punto_venta,
         COALESCE(i.stock, 0) AS stock
       FROM productos p
-      LEFT JOIN inventario i ON p.id = i.producto_id
+      LEFT JOIN inventario i ON p.id = i.producto_id AND p.punto_venta_id = i.punto_venta_id
+      LEFT JOIN puntos_venta pv ON p.punto_venta_id = pv.id
       WHERE (p.nombre LIKE ? OR p.codigo LIKE ?)
       ORDER BY p.nombre ASC
       LIMIT ?
@@ -233,7 +248,7 @@ export const getProductoById = async (req, res) => {
         c.nombre AS categoria,
         c.id AS categoria_id,
         COALESCE(i.stock, 0) AS stock,
-        pv.id AS punto_venta_id,
+        p.punto_venta_id,
         pv.nombre AS punto_venta,
         desc_activo.id AS descuento_id,
         desc_activo.porcentaje AS descuento_porcentaje,
@@ -241,8 +256,8 @@ export const getProductoById = async (req, res) => {
         desc_activo.fecha_fin AS descuento_fecha_fin
       FROM productos p
       LEFT JOIN categorias c ON p.categoria_id = c.id
-      LEFT JOIN inventario i ON p.id = i.producto_id
-      LEFT JOIN puntos_venta pv ON i.punto_venta_id = pv.id
+      LEFT JOIN inventario i ON p.id = i.producto_id AND p.punto_venta_id = i.punto_venta_id
+      LEFT JOIN puntos_venta pv ON p.punto_venta_id = pv.id
       LEFT JOIN (
         SELECT 
           producto_id,
@@ -296,19 +311,26 @@ export const createProducto = async (req, res) => {
   try {
     await connection.beginTransaction()
 
+    const codigoExiste = await verificarCodigoDuplicado(connection, codigo, punto_venta_id)
+    if (codigoExiste) {
+      await connection.rollback()
+      return res.status(400).json({
+        message: `El código "${codigo}" ya existe para este punto de venta. Puedes usar el mismo código en otros puntos de venta.`,
+      })
+    }
+
     // Usar la función utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
-    // Insertar el producto con fecha y hora correcta
     const [result] = await connection.query(
-      "INSERT INTO productos (codigo, nombre, descripcion, precio, categoria_id, fecha_creacion, fecha_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [codigo, nombre, descripcion, precioNumerico, categoria_id || null, fechaActual, fechaActual],
+      "INSERT INTO productos (codigo, nombre, descripcion, precio, categoria_id, punto_venta_id, fecha_creacion, fecha_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [codigo, nombre, descripcion, precioNumerico, categoria_id || null, punto_venta_id, fechaActual, fechaActual],
     )
 
     const productoId = result.insertId
 
-    // Si se proporciona punto_venta_id y stock, actualizar el inventario
-    if (punto_venta_id && stock !== undefined) {
+    // Si se proporciona stock, actualizar el inventario
+    if (stock !== undefined) {
       await connection.query("INSERT INTO inventario (producto_id, punto_venta_id, stock) VALUES (?, ?, ?)", [
         productoId,
         punto_venta_id,
@@ -327,7 +349,12 @@ export const createProducto = async (req, res) => {
     console.error("Error al crear producto:", error)
 
     if (error.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({ message: "El código del producto ya existe" })
+      if (error.sqlMessage.includes("unique_codigo_punto_venta")) {
+        return res.status(400).json({
+          message: `El código "${codigo}" ya existe para este punto de venta. Puedes usar el mismo código en otros puntos de venta.`,
+        })
+      }
+      return res.status(400).json({ message: "Ya existe un producto con estos datos" })
     }
 
     res.status(500).json({ message: "Error al crear producto" })
@@ -355,32 +382,47 @@ export const updateProducto = async (req, res) => {
     await connection.beginTransaction()
 
     // Verificar si el producto existe y obtener su precio actual
-    const [productos] = await connection.query("SELECT precio FROM productos WHERE id = ?", [id])
+    const [productos] = await connection.query("SELECT precio, punto_venta_id FROM productos WHERE id = ?", [id])
     if (productos.length === 0) {
       await connection.rollback()
       return res.status(404).json({ message: "Producto no encontrado" })
     }
 
+    const productoActual = productos[0]
+    const puntoVentaActual = punto_venta_id || productoActual.punto_venta_id
+
+    const codigoExiste = await verificarCodigoDuplicado(connection, codigo, puntoVentaActual, id)
+    if (codigoExiste) {
+      await connection.rollback()
+      return res.status(400).json({
+        message: `El código "${codigo}" ya existe para este punto de venta. Puedes usar el mismo código en otros puntos de venta.`,
+      })
+    }
+
     // Si el precio no cambió (es el mismo que el actual), usar el precio actual
     // Esto evita problemas de redondeo o formato
-    const precioActual = productos[0].precio
+    const precioActual = productoActual.precio
     const precioFinal = precio === precioActual ? precioActual : precioNumerico
 
     // Usar la función utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
-    // Actualizar el producto con fecha de actualización correcta
-    await connection.query(
-      "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, categoria_id = ?, fecha_actualizacion = ? WHERE id = ?",
-      [codigo, nombre, descripcion, precioFinal, categoria_id || null, fechaActual, id],
-    )
+    const updateQuery = punto_venta_id
+      ? "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, categoria_id = ?, punto_venta_id = ?, fecha_actualizacion = ? WHERE id = ?"
+      : "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, categoria_id = ?, fecha_actualizacion = ? WHERE id = ?"
 
-    // Si se proporciona punto_venta_id y stock, actualizar el inventario
-    if (punto_venta_id && stock !== undefined) {
+    const updateParams = punto_venta_id
+      ? [codigo, nombre, descripcion, precioFinal, categoria_id || null, punto_venta_id, fechaActual, id]
+      : [codigo, nombre, descripcion, precioFinal, categoria_id || null, fechaActual, id]
+
+    await connection.query(updateQuery, updateParams)
+
+    // Si se proporciona stock, actualizar el inventario
+    if (stock !== undefined) {
       // Verificar si ya existe un registro de inventario para este producto y punto de venta
       const [inventario] = await connection.query(
         "SELECT * FROM inventario WHERE producto_id = ? AND punto_venta_id = ?",
-        [id, punto_venta_id],
+        [id, puntoVentaActual],
       )
 
       if (inventario.length > 0) {
@@ -388,13 +430,13 @@ export const updateProducto = async (req, res) => {
         await connection.query("UPDATE inventario SET stock = ? WHERE producto_id = ? AND punto_venta_id = ?", [
           stock,
           id,
-          punto_venta_id,
+          puntoVentaActual,
         ])
       } else {
         // Crear un nuevo registro de inventario
         await connection.query("INSERT INTO inventario (producto_id, punto_venta_id, stock) VALUES (?, ?, ?)", [
           id,
-          punto_venta_id,
+          puntoVentaActual,
           stock,
         ])
       }
@@ -408,7 +450,12 @@ export const updateProducto = async (req, res) => {
     console.error("Error al actualizar producto:", error)
 
     if (error.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({ message: "El código del producto ya existe" })
+      if (error.sqlMessage.includes("unique_codigo_punto_venta")) {
+        return res.status(400).json({
+          message: `El código "${codigo}" ya existe para este punto de venta. Puedes usar el mismo código en otros puntos de venta.`,
+        })
+      }
+      return res.status(400).json({ message: "Ya existe un producto con estos datos" })
     }
 
     res.status(500).json({ message: "Error al actualizar producto" })
