@@ -127,8 +127,12 @@ export const createRepuesto = async (req, res) => {
     return res.status(400).json({ message: "El stock debe ser un número no negativo" })
   }
 
-  if (precio !== undefined && (isNaN(precio) || precio < 0)) {
-    return res.status(400).json({ message: "El precio debe ser un número no negativo" })
+  let precioFinal = 0
+  if (precio !== undefined && precio !== null && precio !== "") {
+    precioFinal = Number(precio)
+    if (isNaN(precioFinal) || precioFinal < 0) {
+      return res.status(400).json({ message: "El precio debe ser un número no negativo" })
+    }
   }
 
   const connection = await pool.getConnection()
@@ -140,7 +144,7 @@ export const createRepuesto = async (req, res) => {
     const [result] = await connection.query("INSERT INTO repuestos (nombre, descripcion, precio) VALUES (?, ?, ?)", [
       nombre,
       descripcion || null,
-      precio || 0,
+      precioFinal,
     ])
 
     const repuestoId = result.insertId
@@ -193,8 +197,12 @@ export const updateRepuesto = async (req, res) => {
     return res.status(400).json({ message: "El nombre es obligatorio" })
   }
 
-  if (precio !== undefined && (isNaN(precio) || precio < 0)) {
-    return res.status(400).json({ message: "El precio debe ser un número no negativo" })
+  let precioFinal = 0
+  if (precio !== undefined && precio !== null && precio !== "") {
+    precioFinal = Number(precio)
+    if (isNaN(precioFinal) || precioFinal < 0) {
+      return res.status(400).json({ message: "El precio debe ser un número no negativo" })
+    }
   }
 
   const connection = await pool.getConnection()
@@ -213,7 +221,7 @@ export const updateRepuesto = async (req, res) => {
     await connection.query("UPDATE repuestos SET nombre = ?, descripcion = ?, precio = ? WHERE id = ?", [
       nombre,
       descripcion || null,
-      precio || 0,
+      precioFinal,
       id,
     ])
 
