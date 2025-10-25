@@ -140,6 +140,22 @@ export const createRepuesto = async (req, res) => {
   try {
     await connection.beginTransaction()
 
+    const [existingRepuestos] = await connection.query(
+      `SELECT r.id, r.nombre, pv.nombre as punto_venta_nombre
+       FROM repuestos r
+       INNER JOIN inventario_repuestos i ON r.id = i.repuesto_id
+       INNER JOIN puntos_venta pv ON i.punto_venta_id = pv.id
+       WHERE LOWER(TRIM(r.nombre)) = LOWER(TRIM(?)) AND i.punto_venta_id = ?`,
+      [nombre, punto_venta_id],
+    )
+
+    if (existingRepuestos.length > 0) {
+      await connection.rollback()
+      return res.status(400).json({
+        message: `Ya existe un repuesto con el nombre "${nombre}" en el punto de venta ${existingRepuestos[0].punto_venta_nombre}`,
+      })
+    }
+
     // Insertar el repuesto (modelo simplificado)
     const [result] = await connection.query("INSERT INTO repuestos (nombre, descripcion, precio) VALUES (?, ?, ?)", [
       nombre,
