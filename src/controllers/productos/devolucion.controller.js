@@ -8,17 +8,7 @@ export const getDevoluciones = async (req, res) => {
     // Parámetros de filtrado opcionales
     const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id } = req.query
 
-    let query = `
-      SELECT d.*, 
-             u.nombre AS usuario_nombre,
-             c.nombre AS cliente_nombre,
-             v.numero_factura
-      FROM devoluciones d
-      LEFT JOIN usuarios u ON d.usuario_id = u.id
-      LEFT JOIN clientes c ON d.cliente_id = c.id
-      LEFT JOIN ventas v ON d.venta_id = v.id
-      WHERE 1=1
-    `
+    let query = `SELECT d.*, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre, v.numero_factura FROM devoluciones d LEFT JOIN usuarios u ON d.usuario_id = u.id LEFT JOIN clientes c ON d.cliente_id = c.id LEFT JOIN ventas v ON d.venta_id = v.id WHERE 1=1`
     const queryParams = []
 
     // Aplicar filtros si se proporcionan
@@ -47,28 +37,13 @@ export const getDevoluciones = async (req, res) => {
     for (const devolucion of devoluciones) {
       // Obtener productos devueltos
       const [productosDevueltos] = await pool.query(
-        `
-  SELECT 
-    dd.*,
-    p.codigo AS producto_codigo,
-    p.nombre AS producto_nombre,
-    dv.precio_con_descuento
-  FROM detalle_devoluciones dd
-  JOIN productos p ON dd.producto_id = p.id
-  LEFT JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id
-  WHERE dd.devolucion_id = ?
-`,
+        `SELECT dd.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, dv.precio_con_descuento FROM detalle_devoluciones dd JOIN productos p ON dd.producto_id = p.id LEFT JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id WHERE dd.devolucion_id = ?`,
         [devolucion.id],
       )
 
       // Obtener productos de reemplazo
       const [productosReemplazo] = await pool.query(
-        `
-        SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, p.precio
-        FROM detalle_reemplazos dr
-        JOIN productos p ON dr.producto_id = p.id
-        WHERE dr.devolucion_id = ?
-      `,
+        `SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, p.precio FROM detalle_reemplazos dr JOIN productos p ON dr.producto_id = p.id WHERE dr.devolucion_id = ?`,
         [devolucion.id],
       )
 
@@ -89,17 +64,7 @@ export const getDevolucionById = async (req, res) => {
     const { id } = req.params
 
     const [devoluciones] = await pool.query(
-      `
-      SELECT d.*, 
-             u.nombre AS usuario_nombre,
-             c.nombre AS cliente_nombre,
-             v.numero_factura
-      FROM devoluciones d
-      LEFT JOIN usuarios u ON d.usuario_id = u.id
-      LEFT JOIN clientes c ON d.cliente_id = c.id
-      LEFT JOIN ventas v ON d.venta_id = v.id
-      WHERE d.id = ?
-    `,
+      `SELECT d.*, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre, v.numero_factura FROM devoluciones d LEFT JOIN usuarios u ON d.usuario_id = u.id LEFT JOIN clientes c ON d.cliente_id = c.id LEFT JOIN ventas v ON d.venta_id = v.id WHERE d.id = ?`,
       [id],
     )
 
@@ -111,32 +76,13 @@ export const getDevolucionById = async (req, res) => {
 
     // Obtener productos devueltos
     const [productosDevueltos] = await pool.query(
-      `
-  SELECT 
-    dd.*,
-    p.codigo AS producto_codigo,
-    p.nombre AS producto_nombre,
-    dv.precio_con_descuento
-  FROM detalle_devoluciones dd
-  JOIN productos p ON dd.producto_id = p.id
-  LEFT JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id
-  WHERE dd.devolucion_id = ?
-`,
+      `SELECT dd.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, dv.precio_con_descuento FROM detalle_devoluciones dd JOIN productos p ON dd.producto_id = p.id LEFT JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id WHERE dd.devolucion_id = ?`,
       [id],
     )
 
     // Obtener productos de reemplazo
     const [productosReemplazo] = await pool.query(
-      `
-  SELECT 
-    dr.*,
-    p.codigo AS producto_codigo,
-    p.nombre AS producto_nombre,
-    p.precio
-  FROM detalle_reemplazos dr
-  JOIN productos p ON dr.producto_id = p.id
-  WHERE dr.devolucion_id = ?
-`,
+      `SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, p.precio FROM detalle_reemplazos dr JOIN productos p ON dr.producto_id = p.id WHERE dr.devolucion_id = ?`,
       [id],
     )
 
@@ -185,15 +131,7 @@ export const createDevolucion = async (req, res) => {
 
     // Insertar la devolución y obtener el ID con fecha correcta
     const [result] = await connection.query(
-      `
-      INSERT INTO devoluciones (
-        venta_id, 
-        fecha, 
-        usuario_id,
-        diferencia,
-        cliente_id
-      ) VALUES (?, ?, ?, ?, ?)
-    `,
+      `INSERT INTO devoluciones (venta_id, fecha, usuario_id, diferencia, cliente_id) VALUES (?, ?, ?, ?, ?)`,
       [venta_id, fechaActual, req.user.id, diferencia, cliente_id],
     )
 
@@ -208,37 +146,15 @@ export const createDevolucion = async (req, res) => {
 
       // Si se proporciona un detalle_venta_id específico, usarlo directamente
       if (producto.detalle_venta_id) {
-        query = `
-          SELECT dv.*, 
-                 COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
-          FROM detalle_ventas dv
-          LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id
-          WHERE dv.id = ?
-          GROUP BY dv.id
-        `
+        query = `SELECT dv.*, COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta FROM detalle_ventas dv LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id WHERE dv.id = ? GROUP BY dv.id`
         params = [producto.detalle_venta_id]
       } else if (producto.es_reemplazo) {
         // Si es un producto de reemplazo, buscar en los detalles de venta con es_reemplazo = 1
-        query = `
-          SELECT dv.*, 
-                 COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
-          FROM detalle_ventas dv
-          LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id
-          WHERE dv.venta_id = ? AND dv.producto_id = ? AND dv.es_reemplazo = 1
-          GROUP BY dv.id
-          ORDER BY dv.id DESC LIMIT 1
-        `
+        query = `SELECT dv.*, COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta FROM detalle_ventas dv LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id WHERE dv.venta_id = ? AND dv.producto_id = ? AND dv.es_reemplazo = 1 GROUP BY dv.id ORDER BY dv.id DESC LIMIT 1`
         params = [venta_id, producto.producto_id]
       } else {
         // Si es un producto original, buscar en los detalles de venta normales
-        query = `
-          SELECT dv.*, 
-                 COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta
-          FROM detalle_ventas dv
-          LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id
-          WHERE dv.venta_id = ? AND dv.producto_id = ? AND dv.es_reemplazo = 0
-          GROUP BY dv.id
-        `
+        query = `SELECT dv.*, COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta FROM detalle_ventas dv LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id WHERE dv.venta_id = ? AND dv.producto_id = ? AND dv.es_reemplazo = 0 GROUP BY dv.id`
         params = [venta_id, producto.producto_id]
       }
 
@@ -272,17 +188,7 @@ export const createDevolucion = async (req, res) => {
 
       // Registrar el detalle de la devolución
       await connection.query(
-        `
-        INSERT INTO detalle_devoluciones (
-          devolucion_id, 
-          detalle_venta_id, 
-          producto_id, 
-          cantidad, 
-          precio, 
-          tipo_devolucion,
-          es_reemplazo
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `,
+        `INSERT INTO detalle_devoluciones (devolucion_id, detalle_venta_id, producto_id, cantidad, precio, tipo_devolucion, es_reemplazo) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           devolucionId,
           detalleVenta.id,
@@ -298,50 +204,29 @@ export const createDevolucion = async (req, res) => {
       // Si se devuelve toda la cantidad, marcar como devuelto
       if (producto.cantidad >= cantidadDisponible) {
         await connection.query(
-          `
-          UPDATE detalle_ventas 
-          SET devuelto = 1, devolucion_id = ?, fecha_devolucion = ? 
-          WHERE id = ?
-        `,
+          `UPDATE detalle_ventas SET devuelto = 1, devolucion_id = ?, fecha_devolucion = ? WHERE id = ?`,
           [devolucionId, fechaActual, detalleVenta.id],
         )
       } else {
         // Si es devolución parcial, no marcamos como devuelto pero guardamos la referencia
-        await connection.query(
-          `
-          UPDATE detalle_ventas 
-          SET devolucion_id = ?, fecha_devolucion = ? 
-          WHERE id = ?
-        `,
-          [devolucionId, fechaActual, detalleVenta.id],
-        )
+        await connection.query(`UPDATE detalle_ventas SET devolucion_id = ?, fecha_devolucion = ? WHERE id = ?`, [
+          devolucionId,
+          fechaActual,
+          detalleVenta.id,
+        ])
       }
 
       // Actualizar el inventario si la devolución es normal (no defectuoso)
       if (producto.tipo_devolucion === "normal") {
-        await connection.query(
-          `
-          UPDATE inventario 
-          SET stock = stock + ? 
-          WHERE producto_id = ? AND punto_venta_id = ?
-        `,
-          [producto.cantidad, producto.producto_id, venta.punto_venta_id],
-        )
+        await connection.query(`UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?`, [
+          producto.cantidad,
+          producto.producto_id,
+          venta.punto_venta_id,
+        ])
 
         // Registrar el movimiento en el log de inventario
         await connection.query(
-          `
-          INSERT INTO log_inventario (
-            producto_id, 
-            punto_venta_id, 
-            cantidad, 
-            tipo_movimiento, 
-            referencia_id, 
-            usuario_id, 
-            fecha, 
-            notas
-          ) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?)
-        `,
+          `INSERT INTO log_inventario (producto_id, punto_venta_id, cantidad, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?)`,
           [
             producto.producto_id,
             venta.punto_venta_id,
@@ -355,16 +240,7 @@ export const createDevolucion = async (req, res) => {
       } else if (producto.tipo_devolucion === "defectuoso") {
         // Registrar en la tabla de pérdidas
         await connection.query(
-          `
-          INSERT INTO perdidas (
-            producto_id, 
-            cantidad, 
-            motivo, 
-            devolucion_id, 
-            usuario_id, 
-            fecha
-          ) VALUES (?, ?, ?, ?, ?, ?)
-        `,
+          `INSERT INTO perdidas (producto_id, cantidad, motivo, devolucion_id, usuario_id, fecha) VALUES (?, ?, ?, ?, ?, ?)`,
           [
             producto.producto_id,
             producto.cantidad,
@@ -385,41 +261,20 @@ export const createDevolucion = async (req, res) => {
 
       // Registrar el detalle del reemplazo
       await connection.query(
-        `
-        INSERT INTO detalle_reemplazos (
-          devolucion_id, 
-          producto_id, 
-          cantidad, 
-          precio
-        ) VALUES (?, ?, ?, ?)
-      `,
+        `INSERT INTO detalle_reemplazos (devolucion_id, producto_id, cantidad, precio) VALUES (?, ?, ?, ?)`,
         [devolucionId, producto.producto_id, producto.cantidad, producto.precio],
       )
 
       // Actualizar el inventario
-      await connection.query(
-        `
-        UPDATE inventario 
-        SET stock = stock - ? 
-        WHERE producto_id = ? AND punto_venta_id = ?
-      `,
-        [producto.cantidad, producto.producto_id, venta.punto_venta_id],
-      )
+      await connection.query(`UPDATE inventario SET stock = stock - ? WHERE producto_id = ? AND punto_venta_id = ?`, [
+        producto.cantidad,
+        producto.producto_id,
+        venta.punto_venta_id,
+      ])
 
       // Registrar el movimiento en el log de inventario
       await connection.query(
-        `
-        INSERT INTO log_inventario (
-          producto_id, 
-          punto_venta_id, 
-          cantidad, 
-          tipo_movimiento, 
-          referencia_id, 
-          usuario_id, 
-          fecha, 
-          notas
-        ) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?)
-      `,
+        `INSERT INTO log_inventario (producto_id, punto_venta_id, cantidad, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?)`,
         [
           producto.producto_id,
           venta.punto_venta_id,
@@ -433,19 +288,7 @@ export const createDevolucion = async (req, res) => {
 
       // Agregar el producto de reemplazo a la venta
       await connection.query(
-        `
-        INSERT INTO detalle_ventas (
-          venta_id,
-          producto_id,
-          cantidad,
-          precio_unitario,
-          precio_con_descuento,
-          subtotal,
-          es_reemplazo,
-          devolucion_id,
-          fecha_devolucion
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-      `,
+        `INSERT INTO detalle_ventas (venta_id, producto_id, cantidad, precio_unitario, precio_con_descuento, subtotal, es_reemplazo, devolucion_id, fecha_devolucion) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         [
           venta_id,
           producto.producto_id,
@@ -459,15 +302,29 @@ export const createDevolucion = async (req, res) => {
       )
     }
 
-    // Marcar la venta como que tiene devoluciones
-    await connection.query(
-      `
-      UPDATE ventas 
-      SET tiene_devoluciones = 1 
-      WHERE id = ?
-    `,
+    const [totalesResult] = await connection.query(
+      `SELECT SUM(subtotal) as nuevo_subtotal FROM detalle_ventas WHERE venta_id = ? AND (devuelto = 0 OR es_reemplazo = 1)`,
       [venta_id],
     )
+
+    const nuevoSubtotal = totalesResult[0].nuevo_subtotal || 0
+
+    // Aplicar los mismos porcentajes de interés y descuento que tenía la venta original
+    const porcentajeInteres = Number(venta.porcentaje_interes) || 0
+    const porcentajeDescuento = Number(venta.porcentaje_descuento) || 0
+
+    const montoInteres = (nuevoSubtotal * porcentajeInteres) / 100
+    const montoDescuento = (nuevoSubtotal * porcentajeDescuento) / 100
+    const nuevoTotal = nuevoSubtotal + montoInteres - montoDescuento
+
+    // Actualizar el total de la venta
+    await connection.query(
+      `UPDATE ventas SET subtotal = ?, monto_interes = ?, monto_descuento = ?, total = ? WHERE id = ?`,
+      [nuevoSubtotal, montoInteres, montoDescuento, nuevoTotal, venta_id],
+    )
+
+    // Marcar la venta como que tiene devoluciones
+    await connection.query(`UPDATE ventas SET tiene_devoluciones = 1 WHERE id = ?`, [venta_id])
 
     // Si hay diferencia y es a favor del cliente (diferencia < 0), registrar en cuenta corriente
     if (diferencia < 0 && cliente_id) {
@@ -483,31 +340,15 @@ export const createDevolucion = async (req, res) => {
         const nuevoSaldo = saldoAnterior - montoAbono
 
         // Actualizar el saldo de la cuenta corriente
-        await connection.query(
-          `
-          UPDATE cuentas_corrientes 
-          SET saldo = ?, fecha_ultimo_movimiento = ? 
-          WHERE id = ?
-        `,
-          [nuevoSaldo, fechaActual, cuenta.id],
-        )
+        await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
+          nuevoSaldo,
+          fechaActual,
+          cuenta.id,
+        ])
 
         // Registrar el movimiento en la cuenta corriente
         await connection.query(
-          `
-          INSERT INTO movimientos_cuenta_corriente (
-            cuenta_corriente_id, 
-            tipo, 
-            monto, 
-            saldo_anterior, 
-            saldo_nuevo, 
-            referencia_id, 
-            tipo_referencia, 
-            fecha, 
-            usuario_id, 
-            notas
-          ) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
-        `,
+          `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
           [
             cuenta.id,
             montoAbono,
@@ -534,20 +375,7 @@ export const createDevolucion = async (req, res) => {
 
         // Registrar el movimiento en la cuenta corriente
         await connection.query(
-          `
-          INSERT INTO movimientos_cuenta_corriente (
-            cuenta_corriente_id, 
-            tipo, 
-            monto, 
-            saldo_anterior, 
-            saldo_nuevo, 
-            referencia_id, 
-            tipo_referencia, 
-            fecha, 
-            usuario_id, 
-            notas
-          ) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
-        `,
+          `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
           [
             cuentaCorrienteId,
             montoAbono,
@@ -565,19 +393,7 @@ export const createDevolucion = async (req, res) => {
     else if (diferencia > 0) {
       // Registrar el pago
       await connection.query(
-        `
-        INSERT INTO pagos (
-          monto, 
-          fecha, 
-          referencia_id, 
-          tipo_referencia, 
-          tipo_pago, 
-          cliente_id, 
-          usuario_id, 
-          punto_venta_id, 
-          notas
-        ) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?, ?)
-      `,
+        `INSERT INTO pagos (monto, fecha, referencia_id, tipo_referencia, tipo_pago, cliente_id, usuario_id, punto_venta_id, notas) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?, ?)`,
         [
           diferencia,
           fechaActual,
@@ -605,31 +421,15 @@ export const createDevolucion = async (req, res) => {
           const nuevoSaldo = saldoAnterior + diferenciaNumerica // Aumentar el saldo (es un cargo)
 
           // Actualizar el saldo de la cuenta corriente
-          await connection.query(
-            `
-            UPDATE cuentas_corrientes 
-            SET saldo = ?, fecha_ultimo_movimiento = ? 
-            WHERE id = ?
-          `,
-            [nuevoSaldo, fechaActual, cuenta.id],
-          )
+          await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
+            nuevoSaldo,
+            fechaActual,
+            cuenta.id,
+          ])
 
           // Registrar el movimiento en la cuenta corriente
           await connection.query(
-            `
-            INSERT INTO movimientos_cuenta_corriente (
-              cuenta_corriente_id, 
-              tipo, 
-              monto, 
-              saldo_anterior, 
-              saldo_nuevo, 
-              referencia_id, 
-              tipo_referencia, 
-              fecha, 
-              usuario_id, 
-              notas
-            ) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
-          `,
+            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
             [
               cuenta.id,
               diferenciaNumerica,
@@ -656,20 +456,7 @@ export const createDevolucion = async (req, res) => {
 
           // Registrar el movimiento en la cuenta corriente
           await connection.query(
-            `
-            INSERT INTO movimientos_cuenta_corriente (
-              cuenta_corriente_id, 
-              tipo, 
-              monto, 
-              saldo_anterior, 
-              saldo_nuevo, 
-              referencia_id, 
-              tipo_referencia, 
-              fecha, 
-              usuario_id, 
-              notas
-            ) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)
-          `,
+            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
             [
               cuentaCorrienteId,
               diferenciaNumerica,
@@ -689,17 +476,7 @@ export const createDevolucion = async (req, res) => {
 
     // Obtener la devolución completa para devolverla en la respuesta
     const [devoluciones] = await pool.query(
-      `
-      SELECT d.*, 
-             u.nombre AS usuario_nombre,
-             c.nombre AS cliente_nombre,
-             v.numero_factura
-      FROM devoluciones d
-      LEFT JOIN usuarios u ON d.usuario_id = u.id
-      LEFT JOIN clientes c ON d.cliente_id = c.id
-      LEFT JOIN ventas v ON d.venta_id = v.id
-      WHERE d.id = ?
-    `,
+      `SELECT d.*, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre, v.numero_factura FROM devoluciones d LEFT JOIN usuarios u ON d.usuario_id = u.id LEFT JOIN clientes c ON d.cliente_id = c.id LEFT JOIN ventas v ON d.venta_id = v.id WHERE d.id = ?`,
       [devolucionId],
     )
 
@@ -707,23 +484,13 @@ export const createDevolucion = async (req, res) => {
 
     // Obtener productos devueltos
     const [productosDevueltosResult] = await pool.query(
-      `
-      SELECT dd.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre
-      FROM detalle_devoluciones dd
-      JOIN productos p ON dd.producto_id = p.id
-      WHERE dd.devolucion_id = ?
-    `,
+      `SELECT dd.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre FROM detalle_devoluciones dd JOIN productos p ON dd.producto_id = p.id WHERE dd.devolucion_id = ?`,
       [devolucionId],
     )
 
     // Obtener productos de reemplazo
     const [productosReemplazoResult] = await pool.query(
-      `
-      SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, p.precio
-      FROM detalle_reemplazos dr
-      JOIN productos p ON dr.producto_id = p.id
-      WHERE dr.devolucion_id = ?
-    `,
+      `SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, p.precio FROM detalle_reemplazos dr JOIN productos p ON dr.producto_id = p.id WHERE dr.devolucion_id = ?`,
       [devolucionId],
     )
 
@@ -766,12 +533,7 @@ export const anularDevolucion = async (req, res) => {
 
     // Obtener los productos devueltos
     const [productosDevueltos] = await connection.query(
-      `
-      SELECT dd.*, dv.venta_id, dv.id AS detalle_venta_id
-      FROM detalle_devoluciones dd
-      JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id
-      WHERE dd.devolucion_id = ?
-    `,
+      `SELECT dd.*, dv.venta_id, dv.id AS detalle_venta_id FROM detalle_devoluciones dd JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id WHERE dd.devolucion_id = ?`,
       [id],
     )
 
@@ -791,29 +553,15 @@ export const anularDevolucion = async (req, res) => {
     for (const producto of productosDevueltos) {
       if (producto.tipo_devolucion === "normal") {
         // Restar del inventario
-        await connection.query(
-          `
-          UPDATE inventario 
-          SET stock = stock - ? 
-          WHERE producto_id = ? AND punto_venta_id = ?
-        `,
-          [producto.cantidad, producto.producto_id, venta.punto_venta_id],
-        )
+        await connection.query(`UPDATE inventario SET stock = stock - ? WHERE producto_id = ? AND punto_venta_id = ?`, [
+          producto.cantidad,
+          producto.producto_id,
+          venta.punto_venta_id,
+        ])
 
         // Registrar el movimiento en el log de inventario
         await connection.query(
-          `
-          INSERT INTO log_inventario (
-            producto_id, 
-            punto_venta_id, 
-            cantidad, 
-            tipo_movimiento, 
-            referencia_id, 
-            usuario_id, 
-            fecha, 
-            notas
-          ) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, ?, ?)
-        `,
+          `INSERT INTO log_inventario (producto_id, punto_venta_id, cantidad, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, ?, ?)`,
           [
             producto.producto_id,
             venta.punto_venta_id,
@@ -828,11 +576,7 @@ export const anularDevolucion = async (req, res) => {
 
       // Actualizar el estado del producto en detalle_ventas
       await connection.query(
-        `
-        UPDATE detalle_ventas 
-        SET devuelto = 0, devolucion_id = NULL, fecha_devolucion = NULL 
-        WHERE id = ? AND devolucion_id = ?
-      `,
+        `UPDATE detalle_ventas SET devuelto = 0, devolucion_id = NULL, fecha_devolucion = NULL WHERE id = ? AND devolucion_id = ?`,
         [producto.detalle_venta_id, id],
       )
     }
@@ -840,29 +584,15 @@ export const anularDevolucion = async (req, res) => {
     // Revertir los cambios en el inventario para los productos de reemplazo
     for (const producto of productosReemplazo) {
       // Sumar al inventario
-      await connection.query(
-        `
-        UPDATE inventario 
-        SET stock = stock + ? 
-        WHERE producto_id = ? AND punto_venta_id = ?
-      `,
-        [producto.cantidad, producto.producto_id, venta.punto_venta_id],
-      )
+      await connection.query(`UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?`, [
+        producto.cantidad,
+        producto.producto_id,
+        venta.punto_venta_id,
+      ])
 
       // Registrar el movimiento en el log de inventario
       await connection.query(
-        `
-        INSERT INTO log_inventario (
-          producto_id, 
-          punto_venta_id, 
-          cantidad, 
-          tipo_movimiento, 
-          referencia_id, 
-          usuario_id, 
-          fecha, 
-          notas
-        ) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, ?, ?)
-      `,
+        `INSERT INTO log_inventario (producto_id, punto_venta_id, cantidad, tipo_movimiento, referencia_id, usuario_id, fecha, notas) VALUES (?, ?, ?, 'anulacion_devolucion', ?, ?, ?, ?)`,
         [
           producto.producto_id,
           venta.punto_venta_id,
@@ -876,10 +606,7 @@ export const anularDevolucion = async (req, res) => {
 
       // Eliminar los productos de reemplazo de la venta
       await connection.query(
-        `
-        DELETE FROM detalle_ventas 
-        WHERE venta_id = ? AND producto_id = ? AND es_reemplazo = 1 AND devolucion_id = ?
-      `,
+        `DELETE FROM detalle_ventas WHERE venta_id = ? AND producto_id = ? AND es_reemplazo = 1 AND devolucion_id = ?`,
         [venta.id, producto.producto_id, id],
       )
     }
@@ -905,31 +632,15 @@ export const anularDevolucion = async (req, res) => {
         }
 
         // Actualizar el saldo de la cuenta corriente
-        await connection.query(
-          `
-          UPDATE cuentas_corrientes 
-          SET saldo = ?, fecha_ultimo_movimiento = ? 
-          WHERE id = ?
-        `,
-          [nuevoSaldo, fechaActual, cuenta.id],
-        )
+        await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
+          nuevoSaldo,
+          fechaActual,
+          cuenta.id,
+        ])
 
         // Registrar movimiento en la cuenta corriente
         await connection.query(
-          `
-          INSERT INTO movimientos_cuenta_corriente (
-            cuenta_corriente_id, 
-            tipo, 
-            monto, 
-            saldo_anterior, 
-            saldo_nuevo, 
-            referencia_id, 
-            tipo_referencia, 
-            fecha, 
-            usuario_id, 
-            notas
-          ) VALUES (?, ?, ?, ?, ?, ?, 'anulacion_devolucion', ?, ?, ?)
-        `,
+          `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, ?, ?, ?, ?, ?, 'anulacion_devolucion', ?, ?, ?)`,
           [
             cuenta.id,
             devolucion.diferencia < 0 ? "cargo" : "pago",
@@ -947,34 +658,19 @@ export const anularDevolucion = async (req, res) => {
 
     // Anular la devolución
     await connection.query(
-      `
-      UPDATE devoluciones 
-      SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ? 
-      WHERE id = ?
-    `,
+      `UPDATE devoluciones SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?`,
       [fechaActual, motivo, id],
     )
 
     // Verificar si la venta tiene otras devoluciones activas
     const [otrasDevoluciones] = await connection.query(
-      `
-      SELECT COUNT(*) as total
-      FROM devoluciones
-      WHERE venta_id = ? AND anulada = 0 AND id != ?
-    `,
+      `SELECT COUNT(*) as total FROM devoluciones WHERE venta_id = ? AND anulada = 0 AND id != ?`,
       [venta.id, id],
     )
 
     // Si no hay otras devoluciones, actualizar el flag en la venta
     if (otrasDevoluciones[0].total === 0) {
-      await connection.query(
-        `
-        UPDATE ventas
-        SET tiene_devoluciones = 0
-        WHERE id = ?
-      `,
-        [venta.id],
-      )
+      await connection.query(`UPDATE ventas SET tiene_devoluciones = 0 WHERE id = ?`, [venta.id])
     }
 
     await connection.commit()
@@ -995,16 +691,7 @@ export const getDevolucionesByVenta = async (req, res) => {
     const { ventaId } = req.params
 
     const [devoluciones] = await pool.query(
-      `
-      SELECT d.*, 
-             u.nombre AS usuario_nombre,
-             c.nombre AS cliente_nombre
-      FROM devoluciones d
-      LEFT JOIN usuarios u ON d.usuario_id = u.id
-      LEFT JOIN clientes c ON d.cliente_id = c.id
-      WHERE d.venta_id = ?
-      ORDER BY d.fecha ASC
-    `,
+      `SELECT d.*, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre FROM devoluciones d LEFT JOIN usuarios u ON d.usuario_id = u.id LEFT JOIN clientes c ON d.cliente_id = c.id WHERE d.venta_id = ? ORDER BY d.fecha ASC`,
       [ventaId],
     )
 
@@ -1012,31 +699,13 @@ export const getDevolucionesByVenta = async (req, res) => {
     for (const devolucion of devoluciones) {
       // Obtener productos devueltos
       const [productosDevueltos] = await pool.query(
-        `
-        SELECT 
-          dd.*,
-          p.codigo AS producto_codigo,
-          p.nombre AS producto_nombre,
-          dv.precio_con_descuento
-        FROM detalle_devoluciones dd
-        JOIN productos p ON dd.producto_id = p.id
-        LEFT JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id
-        WHERE dd.devolucion_id = ?
-      `,
+        `SELECT dd.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre, dv.precio_con_descuento FROM detalle_devoluciones dd JOIN productos p ON dd.producto_id = p.id LEFT JOIN detalle_ventas dv ON dd.detalle_venta_id = dv.id WHERE dd.devolucion_id = ?`,
         [devolucion.id],
       )
 
       // Obtener productos de reemplazo
       const [productosReemplazo] = await pool.query(
-        `
-        SELECT 
-          dr.*,
-          p.codigo AS producto_codigo,
-          p.nombre AS producto_nombre
-        FROM detalle_reemplazos dr
-        JOIN productos p ON dr.producto_id = p.id
-        WHERE dr.devolucion_id = ?
-      `,
+        `SELECT dr.*, p.codigo AS producto_codigo, p.nombre AS producto_nombre FROM detalle_reemplazos dr JOIN productos p ON dr.producto_id = p.id WHERE dr.devolucion_id = ?`,
         [devolucion.id],
       )
 
