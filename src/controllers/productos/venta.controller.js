@@ -69,10 +69,57 @@ export const getVentasPaginadas = async (req, res) => {
     const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
 
     // CORREGIDO: Consulta base optimizada que incluye información de pagos
-    let sql = `SELECT DISTINCT v.id, v.numero_factura, v.fecha, v.subtotal, v.porcentaje_interes, v.monto_interes, v.porcentaje_descuento, v.monto_descuento, v.total, v.anulada, v.fecha_anulacion, v.motivo_anulacion, v.tiene_devoluciones, c.id AS cliente_id, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono, u.id AS usuario_id, u.nombre AS usuario_nombre, pv.id AS punto_venta_id, pv.nombre AS punto_venta_nombre, v.tipo_pago AS tipo_pago_nombre, GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres, COUNT(DISTINCT dv.id) AS cantidad_productos, -- NUEVO: Información de métodos de pago reales GROUP_CONCAT(DISTINCT pg.tipo_pago ORDER BY pg.tipo_pago SEPARATOR ', ') AS metodos_pago_reales, COUNT(DISTINCT pg.tipo_pago) AS cantidad_metodos_pago FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id JOIN usuarios u ON v.usuario_id = u.id JOIN puntos_venta pv ON v.punto_venta_id = pv.id LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id LEFT JOIN productos p ON dv.producto_id = p.id -- NUEVO: JOIN con tabla de pagos para obtener métodos reales LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0 WHERE 1=1`
+    let sql = `
+      SELECT DISTINCT
+        v.id, 
+        v.numero_factura, 
+        v.fecha, 
+        v.subtotal, 
+        v.porcentaje_interes,
+        v.monto_interes,
+        v.porcentaje_descuento,
+        v.monto_descuento,
+        v.total,
+        v.anulada,
+        v.fecha_anulacion,
+        v.motivo_anulacion,
+        v.tiene_devoluciones,
+        c.id AS cliente_id,
+        c.nombre AS cliente_nombre,
+        c.telefono AS cliente_telefono,
+        u.id AS usuario_id,
+        u.nombre AS usuario_nombre,
+        pv.id AS punto_venta_id,
+        pv.nombre AS punto_venta_nombre,
+        v.tipo_pago AS tipo_pago_nombre,
+        GROUP_CONCAT(DISTINCT p.nombre SEPARATOR ', ') AS productos_nombres,
+        COUNT(DISTINCT dv.id) AS cantidad_productos,
+        -- NUEVO: Información de métodos de pago reales
+        GROUP_CONCAT(DISTINCT pg.tipo_pago ORDER BY pg.tipo_pago SEPARATOR ', ') AS metodos_pago_reales,
+        COUNT(DISTINCT pg.tipo_pago) AS cantidad_metodos_pago
+      FROM ventas v
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      JOIN usuarios u ON v.usuario_id = u.id
+      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+      LEFT JOIN productos p ON dv.producto_id = p.id
+      -- NUEVO: JOIN con tabla de pagos para obtener métodos reales
+      LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
+      WHERE 1=1
+    `
 
     // CORREGIDO: Consulta de conteo que incluye el filtro de método de pago
-    let countSql = `SELECT COUNT(DISTINCT v.id) as total FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id JOIN usuarios u ON v.usuario_id = u.id JOIN puntos_venta pv ON v.punto_venta_id = pv.id LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id LEFT JOIN productos p ON dv.producto_id = p.id LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0 WHERE 1=1`
+    let countSql = `
+      SELECT COUNT(DISTINCT v.id) as total
+      FROM ventas v
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      JOIN usuarios u ON v.usuario_id = u.id
+      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+      LEFT JOIN productos p ON dv.producto_id = p.id
+      LEFT JOIN pagos pg ON v.id = pg.referencia_id AND pg.tipo_referencia = 'venta' AND pg.anulado = 0
+      WHERE 1=1
+    `
 
     const params = []
     const countParams = []
@@ -122,24 +169,56 @@ export const getVentasPaginadas = async (req, res) => {
     if (tipo_pago && tipo_pago !== "todos") {
       // Para ventas con un solo método de pago, verificar el campo tipo_pago de la venta
       // Para ventas con múltiples métodos, verificar en la tabla de pagos
-      sql += ` AND ((v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR (v.tipo_pago = 'Múltiple' AND EXISTS (SELECT 1 FROM pagos pg2 WHERE pg2.referencia_id = v.id AND pg2.tipo_referencia = 'venta' AND pg2.anulado = 0 AND pg2.tipo_pago = ?)))`
-      countSql += ` AND ((v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR (v.tipo_pago = 'Múltiple' AND EXISTS (SELECT 1 FROM pagos pg2 WHERE pg2.referencia_id = v.id AND pg2.tipo_referencia = 'venta' AND pg2.anulado = 0 AND pg2.tipo_pago = ?)))`
+      sql += ` AND (
+        (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR
+        (v.tipo_pago = 'Múltiple' AND EXISTS (
+          SELECT 1 FROM pagos pg2 
+          WHERE pg2.referencia_id = v.id 
+          AND pg2.tipo_referencia = 'venta' 
+          AND pg2.anulado = 0 
+          AND pg2.tipo_pago = ?
+        ))
+      )`
+      countSql += ` AND (
+        (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR
+        (v.tipo_pago = 'Múltiple' AND EXISTS (
+          SELECT 1 FROM pagos pg2 
+          WHERE pg2.referencia_id = v.id 
+          AND pg2.tipo_referencia = 'venta' 
+          AND pg2.anulado = 0 
+          AND pg2.tipo_pago = ?
+        ))
+      )`
       params.push(tipo_pago, tipo_pago)
       countParams.push(tipo_pago, tipo_pago)
     }
 
     // Búsqueda por producto específico
     if (producto_id) {
-      sql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv2 WHERE dv2.venta_id = v.id AND dv2.producto_id = ?)`
-      countSql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv2 WHERE dv2.venta_id = v.id AND dv2.producto_id = ?)`
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv2 
+        WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
+      )`
+      countSql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv2 
+        WHERE dv2.venta_id = v.id AND dv2.producto_id = ?
+      )`
       params.push(producto_id)
       countParams.push(producto_id)
     }
 
     // Búsqueda por nombre de producto
     if (producto_nombre) {
-      sql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv3 JOIN productos p3 ON dv3.producto_id = p3.id WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?))`
-      countSql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv3 JOIN productos p3 ON dv3.producto_id = p3.id WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?))`
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv3 
+        JOIN productos p3 ON dv3.producto_id = p3.id
+        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+      )`
+      countSql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv3 
+        JOIN productos p3 ON dv3.producto_id = p3.id
+        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+      )`
       const searchPattern = `%${producto_nombre}%`
       params.push(searchPattern, searchPattern)
       countParams.push(searchPattern, searchPattern)
@@ -155,7 +234,10 @@ export const getVentasPaginadas = async (req, res) => {
     }
 
     // CORREGIDO: Agrupar por venta para evitar duplicados
-    sql += ` GROUP BY v.id, v.numero_factura, v.fecha, v.subtotal, v.porcentaje_interes, v.monto_interes, v.porcentaje_descuento, v.monto_descuento, v.total, v.anulada, v.fecha_anulacion, v.motivo_anulacion, v.tiene_devoluciones, c.id, c.nombre, c.telefono, u.id, u.nombre, pv.id, pv.nombre, v.tipo_pago`
+    sql += ` GROUP BY v.id, v.numero_factura, v.fecha, v.subtotal, v.porcentaje_interes,
+             v.monto_interes, v.porcentaje_descuento, v.monto_descuento, v.total,
+             v.anulada, v.fecha_anulacion, v.motivo_anulacion, v.tiene_devoluciones,
+             c.id, c.nombre, c.telefono, u.id, u.nombre, pv.id, pv.nombre, v.tipo_pago`
 
     // Ordenamiento dinámico
     const validSortFields = ["fecha", "numero_factura", "total", "cliente_nombre", "usuario_nombre"]
@@ -326,97 +408,123 @@ export const getTotalVentasFiltradas = async (req, res) => {
       producto_id,
       producto_nombre,
       tipo_pago,
-    } = req.query
+    } = req.query;
 
     // Construimos la subconsulta agregada de pagos (si se filtra por tipo, la limitamos)
     // IMPORTANTE: los placeholders (?) deben empujarse en el mismo orden en 'params'
-    let sql = `SELECT COUNT(DISTINCT v.id) AS cantidad_ventas, COALESCE(SUM(CASE WHEN v.tipo_pago IS NOT NULL AND v.tipo_pago != 'Múltiple' THEN v.total ELSE COALESCE(pg_total.pagos_total, 0) END),0) AS total_monto FROM ventas v LEFT JOIN (SELECT referencia_id, SUM(monto) AS pagos_total FROM pagos WHERE tipo_referencia = 'venta' AND anulado = 0 ${tipo_pago && tipo_pago !== "todos" ? " AND tipo_pago = ?" : ""} GROUP BY referencia_id) AS pg_total ON pg_total.referencia_id = v.id LEFT JOIN clientes c ON v.cliente_id = c.id JOIN usuarios u ON v.usuario_id = u.id JOIN puntos_venta pv ON v.punto_venta_id = pv.id WHERE 1=1`
+    let sql = `
+      SELECT
+        COUNT(DISTINCT v.id) AS cantidad_ventas,
+        COALESCE(SUM(
+          CASE
+            WHEN v.tipo_pago IS NOT NULL AND v.tipo_pago != 'Múltiple' THEN v.total
+            ELSE COALESCE(pg_total.pagos_total, 0)
+          END
+        ),0) AS total_monto
+      FROM ventas v
+      LEFT JOIN (
+        SELECT referencia_id, SUM(monto) AS pagos_total
+        FROM pagos
+        WHERE tipo_referencia = 'venta' AND anulado = 0
+        ${tipo_pago && tipo_pago !== "todos" ? " AND tipo_pago = ?" : ""}
+        GROUP BY referencia_id
+      ) AS pg_total ON pg_total.referencia_id = v.id
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      JOIN usuarios u ON v.usuario_id = u.id
+      JOIN puntos_venta pv ON v.punto_venta_id = pv.id
+      WHERE 1=1
+    `;
 
-    const params = []
+    const params = [];
 
     // Si la subconsulta llevó un placeholder (tipo_pago), debemos agregar su valor primero
     if (tipo_pago && tipo_pago !== "todos") {
-      params.push(tipo_pago) // para el placeholder dentro de la subconsulta pg_total
+      params.push(tipo_pago); // para el placeholder dentro de la subconsulta pg_total
     }
 
     // Filtros comunes (fechas, cliente, punto, anuladas)
     if (fecha_inicio) {
-      sql += ` AND DATE(v.fecha) >= ?`
-      params.push(fecha_inicio)
+      sql += ` AND DATE(v.fecha) >= ?`;
+      params.push(fecha_inicio);
     }
     if (fecha_fin) {
-      sql += ` AND DATE(v.fecha) <= ?`
-      params.push(fecha_fin)
+      sql += ` AND DATE(v.fecha) <= ?`;
+      params.push(fecha_fin);
     }
     if (cliente_id) {
-      sql += ` AND v.cliente_id = ?`
-      params.push(cliente_id)
+      sql += ` AND v.cliente_id = ?`;
+      params.push(cliente_id);
     }
     if (punto_venta_id) {
-      sql += ` AND v.punto_venta_id = ?`
-      params.push(punto_venta_id)
+      sql += ` AND v.punto_venta_id = ?`;
+      params.push(punto_venta_id);
     }
     if (anuladas !== undefined) {
-      sql += ` AND v.anulada = ?`
-      params.push(anuladas === "true" ? 1 : 0)
+      sql += ` AND v.anulada = ?`;
+      params.push(anuladas === "true" ? 1 : 0);
     }
 
     // Búsqueda por producto (si aplica) - mantenemos la lógica de existencia por detalle_ventas
     if (producto_id) {
-      sql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv2 WHERE dv2.venta_id = v.id AND dv2.producto_id = ?)`
-      params.push(producto_id)
+      sql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv2 WHERE dv2.venta_id = v.id AND dv2.producto_id = ?)`;
+      params.push(producto_id);
     }
 
     if (producto_nombre) {
-      sql += ` AND EXISTS (SELECT 1 FROM detalle_ventas dv3 JOIN productos p3 ON dv3.producto_id = p3.id WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?))`
-      const searchPattern = `%${producto_nombre}%`
-      params.push(searchPattern, searchPattern)
+      sql += ` AND EXISTS (
+        SELECT 1 FROM detalle_ventas dv3
+        JOIN productos p3 ON dv3.producto_id = p3.id
+        WHERE dv3.venta_id = v.id AND (p3.nombre LIKE ? OR p3.codigo LIKE ?)
+      )`;
+      const searchPattern = `%${producto_nombre}%`;
+      params.push(searchPattern, searchPattern);
     }
 
     // Búsqueda general
     if (search) {
-      const searchPattern = `%${search}%`
-      sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`
-      params.push(searchPattern, searchPattern, searchPattern)
+      const searchPattern = `%${search}%`;
+      sql += ` AND (v.numero_factura LIKE ? OR c.nombre LIKE ? OR u.nombre LIKE ?)`;
+      params.push(searchPattern, searchPattern, searchPattern);
     }
 
     // Filtro por tipo de pago: mantener la misma lógica que getVentasPaginadas
     if (tipo_pago && tipo_pago !== "todos") {
       // Notar: aquí agregamos dos placeholders más (uno para la comparación directa y otro para el EXISTS)
-      sql += ` AND ((v.tipo_pago = ? AND v.tipo_pago != 'Múltiple') OR (v.tipo_pago = 'Múltiple' AND EXISTS (SELECT 1 FROM pagos pg2 WHERE pg2.referencia_id = v.id AND pg2.tipo_referencia = 'venta' AND pg2.anulado = 0 AND pg2.tipo_pago = ?)))`
-      params.push(tipo_pago, tipo_pago)
+      sql += ` AND (
+        (v.tipo_pago = ? AND v.tipo_pago != 'Múltiple')
+        OR (v.tipo_pago = 'Múltiple' AND EXISTS (
+          SELECT 1 FROM pagos pg2
+          WHERE pg2.referencia_id = v.id
+            AND pg2.tipo_referencia = 'venta'
+            AND pg2.anulado = 0
+            AND pg2.tipo_pago = ?
+        ))
+      )`;
+      params.push(tipo_pago, tipo_pago);
     }
 
     // Ejecutar consulta: devuelve una sola fila con cantidad_ventas y total_monto agregados
-    const [rows] = await pool.query(sql, params)
+    const [rows] = await pool.query(sql, params);
 
     // rows puede ser [] si no hay coincidencias; manejamos safe
-    const resultRow = (rows && rows[0]) || { cantidad_ventas: 0, total_monto: 0 }
+    const resultRow = (rows && rows[0]) || { cantidad_ventas: 0, total_monto: 0 };
 
     res.json({
       total_monto: Number(resultRow.total_monto) || 0,
       cantidad_ventas: Number(resultRow.cantidad_ventas) || 0,
       debug: {
-        appliedFilters: {
-          fecha_inicio,
-          fecha_fin,
-          cliente_id,
-          punto_venta_id,
-          anuladas,
-          tipo_pago,
-          producto_id,
-          producto_nombre,
-          search,
-        },
+        appliedFilters: { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, anuladas, tipo_pago, producto_id, producto_nombre, search },
         finalQuery: sql,
         params,
       },
-    })
+    });
   } catch (error) {
-    console.error("Error al obtener totales filtrados:", error)
-    res.status(500).json({ message: "Error al obtener totales filtrados", error: error.message })
+    console.error("Error al obtener totales filtrados:", error);
+    res.status(500).json({ message: "Error al obtener totales filtrados", error: error.message });
   }
-}
+};
+
+
 
 // Resto de funciones existentes...
 export const getVentas = async (req, res) => {
@@ -560,7 +668,7 @@ export const createVenta = async (req, res) => {
   const {
     cliente_id,
     punto_venta_id,
-    pagos,
+    pagos, // Se recibe un array de pagos
     productos,
     porcentaje_interes = 0,
     porcentaje_descuento = 0,
@@ -600,22 +708,13 @@ export const createVenta = async (req, res) => {
       return res.status(400).json({ message: "La venta debe tener al menos un producto" })
     }
 
-    const productosDetalle = []
     let subtotal = 0
-
     for (const producto of productos) {
       const [productosDb] = await connection.query("SELECT * FROM productos WHERE id = ?", [producto.id])
       if (productosDb.length === 0) {
         await connection.rollback()
         return res.status(404).json({ message: `Producto con ID ${producto.id} no encontrado` })
       }
-
-      const productoDb = productosDb[0]
-
-      productosDetalle.push({
-        nombre: productoDb.nombre,
-        cantidad: producto.cantidad,
-      })
 
       const [inventario] = await connection.query(
         "SELECT stock FROM inventario WHERE producto_id = ? AND punto_venta_id = ?",
@@ -625,7 +724,7 @@ export const createVenta = async (req, res) => {
       if (inventario.length === 0 || inventario[0].stock < producto.cantidad) {
         await connection.rollback()
         return res.status(400).json({
-          message: `Stock insuficiente para el producto ${productoDb.nombre}`,
+          message: `Stock insuficiente para el producto ${productosDb[0].nombre}`,
         })
       }
 
@@ -651,6 +750,7 @@ export const createVenta = async (req, res) => {
 
     const numeroFactura = await generarNumeroFactura()
 
+    // CORREGIDO: Determinar el valor para la columna tipo_pago
     const tipoPagoDisplay = pagos.length > 1 ? "Múltiple" : pagos[0].tipo_pago
 
     const [resultVenta] = await connection.query(
@@ -701,6 +801,7 @@ export const createVenta = async (req, res) => {
       ])
     }
 
+    // Registrar cada pago utilizando la función centralizada
     for (const pago of pagos) {
       await registrarPagoInterno(connection, {
         monto: pago.monto,
@@ -711,7 +812,6 @@ export const createVenta = async (req, res) => {
         usuario_id,
         punto_venta_id,
         notas: notas || `Pago de venta de productos #${numeroFactura}`,
-        detalle_productos: productosDetalle,
       })
     }
 
