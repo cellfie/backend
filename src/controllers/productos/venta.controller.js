@@ -704,6 +704,11 @@ export const createVenta = async (req, res) => {
         ? `Venta de: ${descripcionProductos}`
         : `Venta de ${productos.length} productos: ${descripcionProductos}`
 
+    const notasLimpias = notas && notas.trim() !== "" ? notas.trim() : null
+    const notasFinales = notasLimpias || notasVenta
+
+    console.log("[v0] Notas para cuenta corriente:", notasFinales)
+
     // Registrar cada pago utilizando la función centralizada
     for (const pago of pagos) {
       await registrarPagoInterno(connection, {
@@ -714,7 +719,7 @@ export const createVenta = async (req, res) => {
         cliente_id: clienteId,
         usuario_id,
         punto_venta_id,
-        notas: notas || notasVenta, // Usar la descripción detallada de productos
+        notas: notasFinales, // Usar las notas finales con descripción de productos
       })
     }
 
