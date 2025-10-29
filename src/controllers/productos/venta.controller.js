@@ -560,7 +560,7 @@ export const createVenta = async (req, res) => {
   const {
     cliente_id,
     punto_venta_id,
-    pagos, // Se recibe un array de pagos
+    pagos,
     productos,
     porcentaje_interes = 0,
     porcentaje_descuento = 0,
@@ -600,7 +600,7 @@ export const createVenta = async (req, res) => {
       return res.status(400).json({ message: "La venta debe tener al menos un producto" })
     }
 
-    const nombresProductos = []
+    const productosDetalle = []
     let subtotal = 0
 
     for (const producto of productos) {
@@ -610,8 +610,12 @@ export const createVenta = async (req, res) => {
         return res.status(404).json({ message: `Producto con ID ${producto.id} no encontrado` })
       }
 
-      // Guardar el nombre del producto para la descripción
-      nombresProductos.push(productosDb[0].nombre)
+      const productoDb = productosDb[0]
+
+      productosDetalle.push({
+        nombre: productoDb.nombre,
+        cantidad: producto.cantidad,
+      })
 
       const [inventario] = await connection.query(
         "SELECT stock FROM inventario WHERE producto_id = ? AND punto_venta_id = ?",
@@ -621,7 +625,7 @@ export const createVenta = async (req, res) => {
       if (inventario.length === 0 || inventario[0].stock < producto.cantidad) {
         await connection.rollback()
         return res.status(400).json({
-          message: `Stock insuficiente para el producto ${productosDb[0].nombre}`,
+          message: `Stock insuficiente para el producto ${productoDb.nombre}`,
         })
       }
 
@@ -647,7 +651,6 @@ export const createVenta = async (req, res) => {
 
     const numeroFactura = await generarNumeroFactura()
 
-    // CORREGIDO: Determinar el valor para la columna tipo_pago
     const tipoPagoDisplay = pagos.length > 1 ? "Múltiple" : pagos[0].tipo_pago
 
     const [resultVenta] = await connection.query(
@@ -698,18 +701,6 @@ export const createVenta = async (req, res) => {
       ])
     }
 
-    const descripcionProductos = nombresProductos.join(", ")
-    const notasVenta =
-      productos.length === 1
-        ? `Venta de: ${descripcionProductos}`
-        : `Venta de ${productos.length} productos: ${descripcionProductos}`
-
-    const notasLimpias = notas && notas.trim() !== "" ? notas.trim() : null
-    const notasFinales = notasLimpias || notasVenta
-
-    console.log("[v0] Notas para cuenta corriente:", notasFinales)
-
-    // Registrar cada pago utilizando la función centralizada
     for (const pago of pagos) {
       await registrarPagoInterno(connection, {
         monto: pago.monto,
@@ -719,7 +710,8 @@ export const createVenta = async (req, res) => {
         cliente_id: clienteId,
         usuario_id,
         punto_venta_id,
-        notas: notasFinales, // Usar las notas finales con descripción de productos
+        notas: notas || `Pago de venta de productos #${numeroFactura}`,
+        detalle_productos: productosDetalle,
       })
     }
 

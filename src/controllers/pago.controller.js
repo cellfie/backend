@@ -6,8 +6,7 @@ export const getPagos = async (req, res) => {
   try {
     const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, tipo_referencia, anulados } = req.query
 
-    let sql = `
-            SELECT 
+    let sql = `SELECT 
                 p.id, 
                 p.monto, 
                 p.fecha,
@@ -88,8 +87,7 @@ export const getPagoById = async (req, res) => {
     const { id } = req.params
 
     const [pagos] = await pool.query(
-      `
-            SELECT 
+      `SELECT 
                 p.id, 
                 p.monto, 
                 p.fecha,
@@ -111,8 +109,7 @@ export const getPagoById = async (req, res) => {
             LEFT JOIN clientes c ON p.cliente_id = c.id
             JOIN usuarios u ON p.usuario_id = u.id
             JOIN puntos_venta pv ON p.punto_venta_id = pv.id
-            WHERE p.id = ?
-            `,
+            WHERE p.id = ?`,
       [id],
     )
 
@@ -127,10 +124,19 @@ export const getPagoById = async (req, res) => {
   }
 }
 
-// CORREGIDO: Función registrarPagoInterno con lógica de cuenta corriente corregida
 export const registrarPagoInterno = async (
   connection,
-  { monto, tipo_pago, referencia_id, tipo_referencia, cliente_id, usuario_id, punto_venta_id, notas },
+  {
+    monto,
+    tipo_pago,
+    referencia_id,
+    tipo_referencia,
+    cliente_id,
+    usuario_id,
+    punto_venta_id,
+    notas,
+    detalle_productos,
+  },
 ) => {
   // Verificar que el punto de venta existe
   const [puntosVenta] = await connection.query("SELECT * FROM puntos_venta WHERE id = ?", [punto_venta_id])
@@ -146,7 +152,7 @@ export const registrarPagoInterno = async (
     }
   }
 
-  // CORREGIDO: Si es un pago de cuenta corriente, actualizar el saldo correctamente
+  // Si es un pago de cuenta corriente, actualizar el saldo correctamente
   if (tipo_pago && tipo_pago.toLowerCase().includes("cuenta") && cliente_id) {
     // Verificar si el cliente tiene cuenta corriente
     const [cuentasCorrientes] = await connection.query(
@@ -164,9 +170,6 @@ export const registrarPagoInterno = async (
     const saldoActual = Number.parseFloat(cuentaCorriente.saldo)
     const montoNumerico = Number.parseFloat(monto)
 
-    // CORREGIDO: Lógica de cuenta corriente
-    // Para ventas: el saldo AUMENTA (se agrega deuda)
-    // Para pagos directos: el saldo DISMINUYE (se reduce deuda)
     let nuevoSaldo
     let tipoMovimiento
     let notasMovimiento
@@ -175,9 +178,15 @@ export const registrarPagoInterno = async (
       // Es una venta en cuenta corriente - AUMENTA la deuda
       nuevoSaldo = saldoActual + montoNumerico
       tipoMovimiento = "cargo"
-      notasMovimiento =
-        notas ||
-        `Venta en cuenta corriente. Saldo anterior: ${saldoActual.toFixed(2)}, Nuevo saldo: ${nuevoSaldo.toFixed(2)}`
+
+      if (detalle_productos && detalle_productos.length > 0) {
+        const productosTexto = detalle_productos.map((p) => `${p.nombre} (x${p.cantidad})`).join(", ")
+        notasMovimiento = `Venta: ${productosTexto}`
+      } else {
+        notasMovimiento =
+          notas ||
+          `Venta en cuenta corriente. Saldo anterior: ${saldoActual.toFixed(2)}, Nuevo saldo: ${nuevoSaldo.toFixed(2)}`
+      }
     } else {
       // Es un pago directo - DISMINUYE la deuda
       nuevoSaldo = saldoActual - montoNumerico
@@ -237,7 +246,8 @@ export const createPago = async (req, res) => {
     return res.status(400).json({ errors: errors.array() })
   }
 
-  const { monto, tipo_pago, referencia_id, tipo_referencia, cliente_id, punto_venta_id, notas } = req.body
+  const { monto, tipo_pago, referencia_id, tipo_referencia, cliente_id, punto_venta_id, notas, detalle_productos } =
+    req.body
 
   const usuario_id = req.user.id
 
@@ -255,6 +265,7 @@ export const createPago = async (req, res) => {
       usuario_id,
       punto_venta_id,
       notas,
+      detalle_productos,
     })
 
     await connection.commit()
@@ -303,7 +314,7 @@ export const anularPago = async (req, res) => {
       return res.status(400).json({ message: "El pago ya está anulado" })
     }
 
-    // CORREGIDO: Si es un pago de cuenta corriente, revertir el movimiento
+    // Si es un pago de cuenta corriente, revertir el movimiento
     if (pago.tipo_pago && pago.tipo_pago.toLowerCase().includes("cuenta") && pago.cliente_id) {
       // Obtener la cuenta corriente del cliente
       const [cuentasCorrientes] = await connection.query(
@@ -316,7 +327,7 @@ export const anularPago = async (req, res) => {
         const saldoActual = Number.parseFloat(cuentaCorriente.saldo)
         const montoNumerico = Number.parseFloat(pago.monto)
 
-        // CORREGIDO: Revertir el movimiento según el tipo de referencia original
+        // Revertir el movimiento según el tipo de referencia original
         let nuevoSaldo
         let tipoMovimiento
 
