@@ -752,11 +752,40 @@ export const createVenta = async (req, res) => {
         ],
       )
 
+      // Actualizar inventario y registrar movimiento
+      const cantidadVenta = Number(producto.cantidad)
       await connection.query("UPDATE inventario SET stock = stock - ? WHERE producto_id = ? AND punto_venta_id = ?", [
-        producto.cantidad,
+        cantidadVenta,
         producto.id,
         punto_venta_id,
       ])
+
+      // Registrar movimiento de salida en log_inventario
+      try {
+        await connection.query(
+          `INSERT INTO log_inventario (
+            producto_id,
+            punto_venta_id,
+            cantidad,
+            tipo_movimiento,
+            referencia_id,
+            usuario_id,
+            fecha,
+            notas
+          ) VALUES (?, ?, ?, 'venta', ?, ?, ?, ?)`,
+          [
+            producto.id,
+            punto_venta_id,
+            -cantidadVenta,
+            ventaId,
+            usuario_id,
+            fechaActual,
+            `Venta de productos #${numeroFactura}`,
+          ],
+        )
+      } catch (logError) {
+        console.warn("No se pudo registrar en log_inventario (venta):", logError)
+      }
     }
 
     // Registrar cada pago utilizando la función centralizada
@@ -827,11 +856,39 @@ export const anularVenta = async (req, res) => {
 
     const [detalles] = await connection.query("SELECT * FROM detalle_ventas WHERE venta_id = ?", [id])
     for (const detalle of detalles) {
+      const cantidadDetalle = Number(detalle.cantidad)
       await connection.query("UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?", [
-        detalle.cantidad,
+        cantidadDetalle,
         detalle.producto_id,
         venta.punto_venta_id,
       ])
+
+      // Registrar movimiento de entrada en log_inventario por anulación de venta
+      try {
+        await connection.query(
+          `INSERT INTO log_inventario (
+            producto_id,
+            punto_venta_id,
+            cantidad,
+            tipo_movimiento,
+            referencia_id,
+            usuario_id,
+            fecha,
+            notas
+          ) VALUES (?, ?, ?, 'anulacion_venta', ?, ?, ?, ?)`,
+          [
+            detalle.producto_id,
+            venta.punto_venta_id,
+            cantidadDetalle,
+            venta.id,
+            usuario_id,
+            fechaActual,
+            `Anulación de venta #${venta.numero_factura}: ${motivo}`,
+          ],
+        )
+      } catch (logError) {
+        console.warn("No se pudo registrar en log_inventario (anulación venta):", logError)
+      }
     }
 
     const [pagosAsociados] = await connection.query(

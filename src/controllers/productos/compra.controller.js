@@ -387,6 +387,33 @@ export const createCompra = async (req, res) => {
         item.id,
         punto_venta_id,
       ])
+
+      // Registrar movimiento de entrada en log_inventario por compra
+      try {
+        await connection.query(
+          `INSERT INTO log_inventario (
+            producto_id,
+            punto_venta_id,
+            cantidad,
+            tipo_movimiento,
+            referencia_id,
+            usuario_id,
+            fecha,
+            notas
+          ) VALUES (?, ?, ?, 'compra', ?, ?, ?, ?)`,
+          [
+            item.id,
+            punto_venta_id,
+            cantidad,
+            compraId,
+            usuario_id,
+            fechaActual,
+            `Compra de productos #${numeroComprobante}`,
+          ],
+        )
+      } catch (logError) {
+        console.warn("No se pudo registrar en log_inventario (compra):", logError)
+      }
     }
 
     if (pagos && pagos.length > 0) {
@@ -458,11 +485,39 @@ export const anularCompra = async (req, res) => {
 
     const [detalles] = await connection.query("SELECT * FROM detalle_compras WHERE compra_id = ?", [id])
     for (const detalle of detalles) {
+      const cantidadDetalle = Number(detalle.cantidad)
       await connection.query("UPDATE inventario SET stock = stock - ? WHERE producto_id = ? AND punto_venta_id = ?", [
-        detalle.cantidad,
+        cantidadDetalle,
         detalle.producto_id,
         compra.punto_venta_id,
       ])
+
+      // Registrar movimiento de salida en log_inventario por anulación de compra
+      try {
+        await connection.query(
+          `INSERT INTO log_inventario (
+            producto_id,
+            punto_venta_id,
+            cantidad,
+            tipo_movimiento,
+            referencia_id,
+            usuario_id,
+            fecha,
+            notas
+          ) VALUES (?, ?, ?, 'anulacion_compra', ?, ?, ?, ?)`,
+          [
+            detalle.producto_id,
+            compra.punto_venta_id,
+            -cantidadDetalle,
+            compra.id,
+            usuario_id,
+            fechaActual,
+            `Anulación de compra #${compra.numero_comprobante}: ${motivo}`,
+          ],
+        )
+      } catch (logError) {
+        console.warn("No se pudo registrar en log_inventario (anulación compra):", logError)
+      }
     }
 
     const [pagosAsociados] = await connection.query(
