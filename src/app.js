@@ -9,6 +9,7 @@ import puntosVentaRoutes from "./routes/puntos-ventas.routes.js"
 import inventarioRoutes from "./routes/invetario.routes.js"
 import descuentosRoutes from "./routes/descuentos.routes.js"
 import clientesRoutes from "./routes/clientes.routes.js"
+import proveedoresRoutes from "./routes/proveedores.routes.js"
 import ventasRoutes from "./routes/ventas.routes.js"
 import cuentasCorrientesRoutes from "./routes/cuentas-corrientes.routes.js"
 import pagosRoutes from "./routes/pagos.routes.js"
@@ -66,6 +67,7 @@ app.use("/api/puntos-venta", puntosVentaRoutes)
 app.use("/api/inventario", inventarioRoutes)
 app.use("/api/descuentos", descuentosRoutes)
 app.use("/api/clientes", clientesRoutes)
+app.use("/api/proveedores", proveedoresRoutes)
 app.use("/api/ventas", ventasRoutes)
 app.use("/api/cuentas-corrientes", cuentasCorrientesRoutes)
 app.use("/api/pagos", pagosRoutes)
