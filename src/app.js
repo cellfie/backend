@@ -11,6 +11,7 @@ import descuentosRoutes from "./routes/descuentos.routes.js"
 import clientesRoutes from "./routes/clientes.routes.js"
 import proveedoresRoutes from "./routes/proveedores.routes.js"
 import ventasRoutes from "./routes/ventas.routes.js"
+import comprasRoutes from "./routes/compras.routes.js"
 import cuentasCorrientesRoutes from "./routes/cuentas-corrientes.routes.js"
 import pagosRoutes from "./routes/pagos.routes.js"
 // Nuevas rutas para equipos
@@ -67,6 +68,7 @@ app.use("/api/puntos-venta", puntosVentaRoutes)
 app.use("/api/inventario", inventarioRoutes)
 app.use("/api/descuentos", descuentosRoutes)
 app.use("/api/clientes", clientesRoutes)
+app.use("/api/compras", comprasRoutes)
 app.use("/api/proveedores", proveedoresRoutes)
 app.use("/api/ventas", ventasRoutes)
 app.use("/api/cuentas-corrientes", cuentasCorrientesRoutes)
