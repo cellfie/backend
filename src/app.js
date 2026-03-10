@@ -14,6 +14,7 @@ import ventasRoutes from "./routes/ventas.routes.js"
 import comprasRoutes from "./routes/compras.routes.js"
 import cuentasCorrientesRoutes from "./routes/cuentas-corrientes.routes.js"
 import pagosRoutes from "./routes/pagos.routes.js"
+import cajaRoutes from "./routes/caja.routes.js"
 // Nuevas rutas para equipos
 import equiposRoutes from "./routes/equipos.routes.js"
 import ventasEquiposRoutes from "./routes/ventas-equipos.routes.js"
@@ -73,6 +74,7 @@ app.use("/api/proveedores", proveedoresRoutes)
 app.use("/api/ventas", ventasRoutes)
 app.use("/api/cuentas-corrientes", cuentasCorrientesRoutes)
 app.use("/api/pagos", pagosRoutes)
+app.use("/api/caja", cajaRoutes)
 // Nuevas rutas para equipos
 app.use("/api/equipos", equiposRoutes)
 app.use("/api/ventas-equipos", ventasEquiposRoutes)
