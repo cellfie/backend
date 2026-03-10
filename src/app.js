@@ -33,7 +33,7 @@ import { FRONTEND_URL, FRONTEND_URL_WWW, FRONTEND_URL_DEV } from "./config.js"
 
 const app = express()
 
-const allowedOrigins = [
+const allowedOrigins = [ 
   "http://localhost:5173", // Asegúrate de agregar el puerto 5173, donde está corriendo tu frontend
   "http://localhost:3000",
   FRONTEND_URL,
