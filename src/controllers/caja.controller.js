@@ -29,7 +29,7 @@ export const getCajaActual = async (req, res) => {
 
     const sesion = sesiones[0]
 
-    // Calcular totales de ingresos/egresos propios de caja_movimientos
+    // Calcular totales de ingresos/egresos propios de caja_movimientos (global)
     const [movimientos] = await pool.query(
       `SELECT tipo, SUM(monto) as total
        FROM caja_movimientos
@@ -46,6 +46,40 @@ export const getCajaActual = async (req, res) => {
       },
       { ingresos: 0, egresos: 0 },
     )
+
+    // Totales de ingresos/egresos por origen (ventas_productos, ventas_equipos, reparaciones, general)
+    const [movimientosPorOrigenRows] = await pool.query(
+      `SELECT origen, tipo, SUM(monto) AS total
+       FROM caja_movimientos
+       WHERE caja_sesion_id = ?
+       GROUP BY origen, tipo`,
+      [sesion.id],
+    )
+
+    const baseOrigen = {
+      ingresos: 0,
+      egresos: 0,
+    }
+
+    const movimientosPorOrigen = {
+      general: { ...baseOrigen },
+      ventas_productos: { ...baseOrigen },
+      ventas_equipos: { ...baseOrigen },
+      reparaciones: { ...baseOrigen },
+    }
+
+    movimientosPorOrigenRows.forEach((row) => {
+      const origen = row.origen || "general"
+      if (!movimientosPorOrigen[origen]) {
+        movimientosPorOrigen[origen] = { ...baseOrigen }
+      }
+      if (row.tipo === "ingreso") {
+        movimientosPorOrigen[origen].ingresos += Number(row.total) || 0
+      }
+      if (row.tipo === "egreso") {
+        movimientosPorOrigen[origen].egresos += Number(row.total) || 0
+      }
+    })
 
     // Totales de pagos de VENTAS DE PRODUCTOS (tipo_referencia = 'venta')
     const [totalesVentasProductos] = await pool.query(
@@ -111,6 +145,7 @@ export const getCajaActual = async (req, res) => {
       sesion,
       totales: {
         movimientos: totalesMovimientos,
+        movimientos_por_origen: movimientosPorOrigen,
         ventas_productos: totalesVentasProductos,
         ventas_equipos: totalesVentasEquipos,
         compras: totalesCompras,
@@ -395,7 +430,7 @@ export const getSesionesCaja = async (req, res) => {
 // Historial de movimientos de una sesión de caja (paginado)
 export const getMovimientosCaja = async (req, res) => {
   try {
-    const { caja_sesion_id, page = 1, limit = 20, tipo } = req.query
+    const { caja_sesion_id, page = 1, limit = 20, tipo, origen } = req.query
 
     if (!caja_sesion_id) {
       return res.status(400).json({ message: "caja_sesion_id es obligatorio" })
@@ -411,6 +446,12 @@ export const getMovimientosCaja = async (req, res) => {
       where += " AND cm.tipo = ?"
       params.push(tipo)
       countParams.push(tipo)
+    }
+
+    if (origen && origen !== "todos") {
+      where += " AND cm.origen = ?"
+      params.push(origen)
+      countParams.push(origen)
     }
 
     const sql = `
