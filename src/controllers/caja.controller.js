@@ -100,7 +100,7 @@ export const getCajaActual = async (req, res) => {
     const [totalesVentasEquipos] = await pool.query(
       `SELECT 
           pe.tipo_pago,
-          SUM(pe.monto) AS total
+          SUM(pe.monto_ars) AS total
         FROM pagos_ventas_equipos pe
         JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
         WHERE ve.punto_venta_id = ?
