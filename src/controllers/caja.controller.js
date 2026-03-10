@@ -47,8 +47,8 @@ export const getCajaActual = async (req, res) => {
       { ingresos: 0, egresos: 0 },
     )
 
-    // Totales de pagos de VENTAS (tipo_referencia = 'venta')
-    const [totalesVentas] = await pool.query(
+    // Totales de pagos de VENTAS DE PRODUCTOS (tipo_referencia = 'venta')
+    const [totalesVentasProductos] = await pool.query(
       `SELECT 
           p.tipo_pago,
           SUM(p.monto) AS total
@@ -59,6 +59,21 @@ export const getCajaActual = async (req, res) => {
           AND p.anulado = 0
           AND v.anulada = 0
         GROUP BY p.tipo_pago`,
+      [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+    )
+
+    // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos)
+    const [totalesVentasEquipos] = await pool.query(
+      `SELECT 
+          pe.tipo_pago,
+          SUM(pe.monto) AS total
+        FROM pagos_ventas_equipos pe
+        JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
+        WHERE ve.punto_venta_id = ?
+          AND pe.fecha_pago BETWEEN ? AND COALESCE(?, NOW())
+          AND pe.anulado = 0
+          AND ve.anulada = 0
+        GROUP BY pe.tipo_pago`,
       [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
@@ -96,7 +111,8 @@ export const getCajaActual = async (req, res) => {
       sesion,
       totales: {
         movimientos: totalesMovimientos,
-        ventas: totalesVentas,
+        ventas_productos: totalesVentasProductos,
+        ventas_equipos: totalesVentasEquipos,
         compras: totalesCompras,
         reparaciones: totalesReparaciones,
       },
@@ -243,7 +259,7 @@ export const registrarMovimientoCaja = async (req, res) => {
     return res.status(400).json({ errors: errors.array() })
   }
 
-  const { caja_sesion_id, tipo, concepto, monto, metodo_pago } = req.body
+  const { caja_sesion_id, tipo, concepto, monto, metodo_pago, origen } = req.body
 
   if (!req.user || !req.user.id) {
     return res.status(401).json({ message: "Usuario no autenticado" })
@@ -266,6 +282,11 @@ export const registrarMovimientoCaja = async (req, res) => {
 
     const fecha = formatearFechaParaDB()
 
+    const origenSanitizado =
+      origen && ["general", "ventas_productos", "ventas_equipos", "reparaciones"].includes(origen)
+        ? origen
+        : "general"
+
     const [result] = await pool.query(
       `INSERT INTO caja_movimientos (
         caja_sesion_id,
@@ -273,10 +294,11 @@ export const registrarMovimientoCaja = async (req, res) => {
         concepto,
         monto,
         metodo_pago,
+        origen,
         usuario_id,
         fecha
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [caja_sesion_id, tipo, concepto, monto, metodo_pago || null, usuario_id, fecha],
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [caja_sesion_id, tipo, concepto, monto, metodo_pago || null, origenSanitizado, usuario_id, fecha],
     )
 
     const [movimiento] = await pool.query("SELECT * FROM caja_movimientos WHERE id = ?", [result.insertId])

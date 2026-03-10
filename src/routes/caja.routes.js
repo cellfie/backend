@@ -44,6 +44,10 @@ const validateMovimientoCaja = [
     .withMessage("El monto debe ser un número")
     .custom((value) => value > 0)
     .withMessage("El monto debe ser mayor a cero"),
+  check("origen")
+    .optional()
+    .isIn(["general", "ventas_productos", "ventas_equipos", "reparaciones"])
+    .withMessage("Origen de movimiento inválido"),
 ]
 
 // Rutas principales de caja
