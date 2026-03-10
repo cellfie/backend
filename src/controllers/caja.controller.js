@@ -656,7 +656,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
     todos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
 
     const totalItems = todos.length
-    const limitNum = Math.min(Number.parseInt(limit) || 50, 100)
+    const limitNum = Math.min(Math.max(1, Number.parseInt(limit) || 50), 200)
     const pageNum = Math.max(1, Number.parseInt(page) || 1)
     const offset = (pageNum - 1) * limitNum
     const movimientos = todos.slice(offset, offset + limitNum)
