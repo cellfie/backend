@@ -7,6 +7,7 @@ import {
   registrarMovimientoCaja,
   getSesionesCaja,
   getMovimientosCaja,
+  getMovimientosCompletosCaja,
 } from "../controllers/caja.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
@@ -57,6 +58,7 @@ router.put("/:id/cerrar", verifyToken(["admin", "empleado"]), validateCerrarCaja
 router.post("/movimientos", verifyToken(["admin", "empleado"]), validateMovimientoCaja, registrarMovimientoCaja)
 router.get("/sesiones", verifyToken(["admin", "empleado"]), getSesionesCaja)
 router.get("/movimientos", verifyToken(["admin", "empleado"]), getMovimientosCaja)
+router.get("/sesion/:id/movimientos-completos", verifyToken(["admin", "empleado"]), getMovimientosCompletosCaja)
 
 export default router
 

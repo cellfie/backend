@@ -501,3 +501,183 @@ export const getMovimientosCaja = async (req, res) => {
   }
 }
 
+// Movimientos completos por tab: ventas (pagos) + movimientos manuales, unificados y paginados
+export const getMovimientosCompletosCaja = async (req, res) => {
+  try {
+    const { id: caja_sesion_id } = req.params
+    const { origen = "ventas_productos", page = 1, limit = 50 } = req.query
+
+    if (!caja_sesion_id) {
+      return res.status(400).json({ message: "caja_sesion_id es obligatorio" })
+    }
+
+    const [sesiones] = await pool.query(
+      "SELECT id, punto_venta_id, fecha_apertura, fecha_cierre FROM caja_sesiones WHERE id = ?",
+      [caja_sesion_id],
+    )
+    if (sesiones.length === 0) {
+      return res.status(404).json({ message: "Sesión de caja no encontrada" })
+    }
+    const sesion = sesiones[0]
+    const punto_venta_id = sesion.punto_venta_id
+    const fechaDesde = sesion.fecha_apertura
+    const fechaHasta = sesion.fecha_cierre || formatearFechaParaDB()
+
+    const normalizeRow = (row, tipo, concepto) => ({
+      id: row.id,
+      fecha: row.fecha,
+      concepto: concepto || row.concepto || "",
+      monto: Number(row.monto) || 0,
+      tipo_pago: row.tipo_pago || row.metodo_pago || "",
+      tipo,
+      usuario_nombre: row.usuario_nombre || "",
+      origen: row.origen || null,
+    })
+
+    let todos = []
+
+    if (origen === "ventas_productos") {
+      const [pagosVenta] = await pool.query(
+        `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, v.numero_factura
+         FROM pagos p
+         JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
+         JOIN usuarios u ON p.usuario_id = u.id
+         WHERE p.punto_venta_id = ?
+           AND p.fecha >= ? AND p.fecha <= ?
+           AND p.anulado = 0 AND v.anulada = 0
+         ORDER BY p.fecha DESC`,
+        [punto_venta_id, fechaDesde, fechaHasta],
+      )
+      todos = pagosVenta.map((row) =>
+        normalizeRow(row, "venta", `Venta ${row.numero_factura || row.referencia_id}`),
+      )
+
+      const [manual] = await pool.query(
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+         FROM caja_movimientos cm
+         JOIN usuarios u ON cm.usuario_id = u.id
+         WHERE cm.caja_sesion_id = ? AND cm.origen = 'ventas_productos'
+         ORDER BY cm.fecha DESC`,
+        [caja_sesion_id],
+      )
+      manual.forEach((row) => {
+        todos.push(
+          normalizeRow(
+            { ...row, tipo_pago: row.tipo_pago },
+            row.tipo === "egreso" ? "egreso" : "ingreso",
+            row.concepto,
+          ),
+        )
+      })
+    } else if (origen === "ventas_equipos") {
+      const [pagosEquipos] = await pool.query(
+        `SELECT pe.id, pe.fecha_pago AS fecha, pe.monto_ars AS monto, pe.tipo_pago, pe.venta_equipo_id AS referencia_id, u.nombre AS usuario_nombre, ve.numero_factura
+         FROM pagos_ventas_equipos pe
+         JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
+         LEFT JOIN usuarios u ON pe.usuario_id = u.id
+         WHERE ve.punto_venta_id = ?
+           AND pe.fecha_pago >= ? AND pe.fecha_pago <= ?
+           AND pe.anulado = 0 AND ve.anulada = 0
+         ORDER BY pe.fecha_pago DESC`,
+        [punto_venta_id, fechaDesde, fechaHasta],
+      )
+      todos = pagosEquipos.map((row) =>
+        normalizeRow(row, "venta", `Venta equipo ${row.numero_factura || row.referencia_id}`),
+      )
+
+      const [manual] = await pool.query(
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+         FROM caja_movimientos cm
+         JOIN usuarios u ON cm.usuario_id = u.id
+         WHERE cm.caja_sesion_id = ? AND cm.origen = 'ventas_equipos'
+         ORDER BY cm.fecha DESC`,
+        [caja_sesion_id],
+      )
+      manual.forEach((row) =>
+        todos.push(
+          normalizeRow(
+            { ...row, tipo_pago: row.tipo_pago },
+            row.tipo === "egreso" ? "egreso" : "ingreso",
+            row.concepto,
+          ),
+        ),
+      )
+    } else if (origen === "reparaciones") {
+      const [pagosRep] = await pool.query(
+        `SELECT pr.id, pr.fecha_pago AS fecha, pr.monto, pr.metodo_pago AS tipo_pago, pr.reparacion_id AS referencia_id, u.nombre AS usuario_nombre
+         FROM pagos_reparacion pr
+         JOIN reparaciones r ON pr.reparacion_id = r.id
+         LEFT JOIN usuarios u ON pr.usuario_id = u.id
+         WHERE r.punto_venta_id = ?
+           AND pr.fecha_pago >= ? AND pr.fecha_pago <= ?
+         ORDER BY pr.fecha_pago DESC`,
+        [punto_venta_id, fechaDesde, fechaHasta],
+      )
+      todos = pagosRep.map((row) =>
+        normalizeRow(row, "venta", `Reparación #${row.referencia_id}`),
+      )
+
+      const [manual] = await pool.query(
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+         FROM caja_movimientos cm
+         JOIN usuarios u ON cm.usuario_id = u.id
+         WHERE cm.caja_sesion_id = ? AND cm.origen = 'reparaciones'
+         ORDER BY cm.fecha DESC`,
+        [caja_sesion_id],
+      )
+      manual.forEach((row) =>
+        todos.push(
+          normalizeRow(
+            { ...row, tipo_pago: row.tipo_pago },
+            row.tipo === "egreso" ? "egreso" : "ingreso",
+            row.concepto,
+          ),
+        ),
+      )
+    } else {
+      // general: solo movimientos manuales con origen general
+      const [manual] = await pool.query(
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+         FROM caja_movimientos cm
+         JOIN usuarios u ON cm.usuario_id = u.id
+         WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
+         ORDER BY cm.fecha DESC`,
+        [caja_sesion_id],
+      )
+      todos = manual.map((row) =>
+        normalizeRow(
+          { ...row, tipo_pago: row.tipo_pago },
+          row.tipo === "egreso" ? "egreso" : "ingreso",
+          row.concepto,
+        ),
+      )
+    }
+
+    todos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+
+    const totalItems = todos.length
+    const limitNum = Math.min(Number.parseInt(limit) || 50, 100)
+    const pageNum = Math.max(1, Number.parseInt(page) || 1)
+    const offset = (pageNum - 1) * limitNum
+    const movimientos = todos.slice(offset, offset + limitNum)
+    const totalPages = Math.ceil(totalItems / limitNum)
+
+    res.json({
+      movimientos,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalItems,
+        itemsPerPage: limitNum,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+        startItem: totalItems ? offset + 1 : 0,
+        endItem: Math.min(offset + limitNum, totalItems),
+      },
+    })
+  } catch (error) {
+    console.error("Error al obtener movimientos completos de caja:", error)
+    res.status(500).json({ message: "Error al obtener movimientos de caja" })
+  }
+}
+
