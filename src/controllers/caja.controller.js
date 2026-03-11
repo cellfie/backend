@@ -2,6 +2,15 @@ import pool from "../db.js"
 import { validationResult } from "express-validator"
 import { formatearFechaParaDB } from "../utils/dateUtils.js"
 
+/** Verifica si existe una sesión de caja abierta para el punto de venta. Usar antes de registrar ventas/reparaciones/compras. */
+export const tieneCajaAbierta = async (punto_venta_id) => {
+  const [rows] = await pool.query(
+    "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' LIMIT 1",
+    [punto_venta_id],
+  )
+  return rows.length > 0
+}
+
 // Obtener la sesión de caja abierta para un punto de venta (si existe)
 export const getCajaActual = async (req, res) => {
   try {
@@ -175,12 +184,28 @@ export const abrirCaja = async (req, res) => {
 
   try {
     const [sesionesAbiertas] = await pool.query(
-      "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' LIMIT 1",
+      "SELECT id, fecha_apertura FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC",
       [punto_venta_id],
     )
 
     if (sesionesAbiertas.length > 0) {
-      return res.status(400).json({ message: "Ya existe una caja abierta para este punto de venta" })
+      const sesionVigente = sesionesAbiertas[0]
+      const fechaAperturaSesion = sesionVigente.fecha_apertura ? new Date(sesionVigente.fecha_apertura) : null
+      const hoy = new Date()
+      const esMismoDia =
+        fechaAperturaSesion &&
+        fechaAperturaSesion.getFullYear() === hoy.getFullYear() &&
+        fechaAperturaSesion.getMonth() === hoy.getMonth() &&
+        fechaAperturaSesion.getDate() === hoy.getDate()
+      if (esMismoDia) {
+        return res.status(400).json({ message: "Ya existe una caja abierta para este punto de venta" })
+      }
+      // Sesión abierta de otro día: cerrarla para poder abrir una nueva desde 0
+      const fechaCierre = formatearFechaParaDB()
+      await pool.query(
+        `UPDATE caja_sesiones SET estado = 'cerrada', usuario_cierre_id = ?, fecha_cierre = ?, notas_cierre = ? WHERE id = ?`,
+        [usuario_id, fechaCierre, "Cierre automático al abrir nueva sesión del día.", sesionVigente.id],
+      )
     }
 
     const fechaApertura = formatearFechaParaDB()

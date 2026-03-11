@@ -251,6 +251,15 @@ export const createVentaEquipo = async (req, res) => {
       return res.status(404).json({ message: "Punto de venta no encontrado" })
     }
 
+    const { tieneCajaAbierta } = await import("../caja.controller.js")
+    const cajaAbierta = await tieneCajaAbierta(punto_venta_id)
+    if (!cajaAbierta) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar ventas de equipos. Abra la caja desde el módulo Caja.",
+      })
+    }
+
     // Validar cliente si se proporciona
     let clienteId = null
     if (cliente_id) {

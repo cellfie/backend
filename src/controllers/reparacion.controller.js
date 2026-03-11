@@ -240,6 +240,15 @@ export const createReparacion = async (req, res) => {
       return res.status(404).json({ message: "Punto de venta no encontrado" })
     }
 
+    const { tieneCajaAbierta } = await import("./caja.controller.js")
+    const cajaAbierta = await tieneCajaAbierta(punto_venta_id)
+    if (!cajaAbierta) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar reparaciones. Abra la caja desde el módulo Caja.",
+      })
+    }
+
     // Verificar si se proporciona un cliente
     if (!cliente) {
       await connection.rollback()
@@ -909,6 +918,15 @@ export const registrarPagoReparacion = async (req, res) => {
     }
 
     const reparacion = reparaciones[0]
+    const { tieneCajaAbierta } = await import("./caja.controller.js")
+    const cajaAbierta = await tieneCajaAbierta(reparacion.punto_venta_id)
+    if (!cajaAbierta) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
+      })
+    }
+
     const totalReparacion = Number.parseFloat(reparacion.total) || 0
     const totalPagadoRep = Number.parseFloat(reparacion.total_pagado) || 0
     const saldoPendiente = totalReparacion - totalPagadoRep

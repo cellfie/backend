@@ -288,6 +288,15 @@ export const createCompra = async (req, res) => {
       return res.status(404).json({ message: "Punto de venta no encontrado" })
     }
 
+    const { tieneCajaAbierta } = await import("../caja.controller.js")
+    const cajaAbierta = await tieneCajaAbierta(punto_venta_id)
+    if (!cajaAbierta) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar compras. Abra la caja desde el módulo Caja.",
+      })
+    }
+
     const [proveedores] = await connection.query("SELECT * FROM proveedores WHERE id = ?", [proveedor_id])
     if (proveedores.length === 0) {
       await connection.rollback()

@@ -644,6 +644,15 @@ export const createVenta = async (req, res) => {
       return res.status(404).json({ message: "Punto de venta no encontrado" })
     }
 
+    const { tieneCajaAbierta } = await import("../caja.controller.js")
+    const cajaAbierta = await tieneCajaAbierta(punto_venta_id)
+    if (!cajaAbierta) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar ventas. Abra la caja desde el módulo Caja.",
+      })
+    }
+
     let clienteId = null
     if (cliente_id) {
       const [clientes] = await connection.query("SELECT * FROM clientes WHERE id = ?", [cliente_id])
