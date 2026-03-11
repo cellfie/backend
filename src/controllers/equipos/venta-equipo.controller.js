@@ -502,12 +502,22 @@ export const createVentaEquipo = async (req, res) => {
         )
       }
 
-      // Registrar el pago en la tabla de pagos (para todos los tipos de pago)
+      // Obtener sesión de caja abierta para asociar el pago
+      const [sesionesCaja] = await connection.query(
+        "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
+        [punto_venta_id],
+      )
+      if (sesionesCaja.length === 0) {
+        throw new Error("La caja debe estar abierta para registrar pagos de ventas de equipos")
+      }
+      const cajaSesionId = sesionesCaja[0].id
+
+      // Registrar el pago en la tabla de pagos de ventas de equipos
       await connection.query(
         `INSERT INTO pagos_ventas_equipos (
                     venta_equipo_id, monto_usd, monto_ars, tipo_pago, fecha_pago,
-                    usuario_id, punto_venta_id, notas
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    usuario_id, punto_venta_id, caja_sesion_id, notas
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           ventaId,
           montoPagoUSD,
@@ -516,6 +526,7 @@ export const createVentaEquipo = async (req, res) => {
           fechaActual,
           usuario_id,
           punto_venta_id,
+          cajaSesionId,
           notas || `Pago por venta de equipo #${numeroFactura}`,
         ],
       )

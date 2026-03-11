@@ -105,19 +105,18 @@ export const getCajaActual = async (req, res) => {
       [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
-    // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos)
+    // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos) ligados a la sesión actual
     const [totalesVentasEquipos] = await pool.query(
       `SELECT 
           pe.tipo_pago,
           SUM(pe.monto_ars) AS total
         FROM pagos_ventas_equipos pe
         JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
-        WHERE ve.punto_venta_id = ?
-          AND pe.fecha_pago BETWEEN ? AND COALESCE(?, NOW())
+        WHERE pe.caja_sesion_id = ?
           AND pe.anulado = 0
           AND ve.anulada = 0
         GROUP BY pe.tipo_pago`,
-      [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+      [sesion.id],
     )
 
     // Totales de pagos de COMPRAS (tipo_referencia = 'compra')
@@ -600,11 +599,10 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          FROM pagos_ventas_equipos pe
          JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
          LEFT JOIN usuarios u ON pe.usuario_id = u.id
-         WHERE ve.punto_venta_id = ?
-           AND pe.fecha_pago >= ? AND pe.fecha_pago <= ?
+         WHERE pe.caja_sesion_id = ?
            AND pe.anulado = 0 AND ve.anulada = 0
          ORDER BY pe.fecha_pago DESC`,
-        [punto_venta_id, fechaDesde, fechaHasta],
+        [caja_sesion_id],
       )
       todos = pagosEquipos.map((row) =>
         normalizeRow(row, "venta", `Venta equipo ${row.numero_factura || row.referencia_id}`),
