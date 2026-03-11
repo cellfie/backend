@@ -312,6 +312,19 @@ export const createReparacion = async (req, res) => {
 
     const reparacionId = resultReparacion.insertId
 
+    // Obtener sesión de caja abierta para este punto de venta (para asociar pagos de reparación)
+    const [sesionesCaja] = await connection.query(
+      "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
+      [punto_venta_id],
+    )
+    if (sesionesCaja.length === 0) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
+      })
+    }
+    const cajaSesionId = sesionesCaja[0].id
+
     // Registrar la acción de creación en el historial
     await registrarAccion(reparacionId, "creacion", req.user.id, "Reparación registrada en el sistema", connection)
 
@@ -429,9 +442,17 @@ export const createReparacion = async (req, res) => {
         // Registrar pago de reparación - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
         const [resultPago] = await connection.query(
           `INSERT INTO pagos_reparacion (
-            reparacion_id, monto, metodo_pago, fecha_pago, usuario_id, referencia_cuenta_corriente
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
-          [reparacionId, montoPago, pago.metodo, formatearFechaParaDB(), req.user.id, resultMovimiento.insertId],
+            reparacion_id, monto, metodo_pago, fecha_pago, usuario_id, caja_sesion_id, referencia_cuenta_corriente
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            reparacionId,
+            montoPago,
+            pago.metodo,
+            formatearFechaParaDB(),
+            req.user.id,
+            cajaSesionId,
+            resultMovimiento.insertId,
+          ],
         )
 
         // Registrar la acción de pago en el historial
@@ -446,9 +467,9 @@ export const createReparacion = async (req, res) => {
         // Registrar pago normal - CAMBIO: usar formatearFechaParaDB() en lugar de NOW()
         const [resultPago] = await connection.query(
           `INSERT INTO pagos_reparacion (
-            reparacion_id, monto, metodo_pago, fecha_pago, usuario_id
-          ) VALUES (?, ?, ?, ?, ?)`,
-          [reparacionId, montoPago, pago.metodo, formatearFechaParaDB(), req.user.id],
+            reparacion_id, monto, metodo_pago, fecha_pago, usuario_id, caja_sesion_id
+          ) VALUES (?, ?, ?, ?, ?, ?)`,
+          [reparacionId, montoPago, pago.metodo, formatearFechaParaDB(), req.user.id, cajaSesionId],
         )
 
         // Registrar la acción de pago en el historial
@@ -927,6 +948,19 @@ export const registrarPagoReparacion = async (req, res) => {
       })
     }
 
+    // Obtener sesión de caja abierta para asociar los pagos de reparación
+    const [sesionesCaja] = await connection.query(
+      "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
+      [reparacion.punto_venta_id],
+    )
+    if (sesionesCaja.length === 0) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
+      })
+    }
+    const cajaSesionId = sesionesCaja[0].id
+
     const totalReparacion = Number.parseFloat(reparacion.total) || 0
     const totalPagadoRep = Number.parseFloat(reparacion.total_pagado) || 0
     const saldoPendiente = totalReparacion - totalPagadoRep
@@ -1033,10 +1067,11 @@ export const registrarPagoReparacion = async (req, res) => {
         metodo_pago, 
         fecha_pago, 
         usuario_id, 
+        caja_sesion_id,
         referencia_cuenta_corriente
-      ) VALUES (?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
-      [id, montoNumerico, metodo_pago, formatearFechaParaDB(), req.user.id, referenciaCuentaCorriente],
+      [id, montoNumerico, metodo_pago, formatearFechaParaDB(), req.user.id, cajaSesionId, referenciaCuentaCorriente],
     )
 
     // Registrar la acción de pago en el historial

@@ -134,17 +134,16 @@ export const getCajaActual = async (req, res) => {
       [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
-    // Totales de pagos de REPARACIONES (tabla pagos_reparacion)
+    // Totales de pagos de REPARACIONES (tabla pagos_reparacion) ligados a la sesión actual
     const [totalesReparaciones] = await pool.query(
       `SELECT 
           pr.metodo_pago AS tipo_pago,
           SUM(pr.monto) AS total
         FROM pagos_reparacion pr
         JOIN reparaciones r ON pr.reparacion_id = r.id
-        WHERE r.punto_venta_id = ?
-          AND pr.fecha_pago BETWEEN ? AND COALESCE(?, NOW())
+        WHERE pr.caja_sesion_id = ?
         GROUP BY pr.metodo_pago`,
-      [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+      [sesion.id],
     )
 
     // Nota: para ventas de equipos tu sistema usa pagos_ventas_equipos; se pueden sumar más adelante
@@ -631,10 +630,9 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          FROM pagos_reparacion pr
          JOIN reparaciones r ON pr.reparacion_id = r.id
          LEFT JOIN usuarios u ON pr.usuario_id = u.id
-         WHERE r.punto_venta_id = ?
-           AND pr.fecha_pago >= ? AND pr.fecha_pago <= ?
+         WHERE pr.caja_sesion_id = ?
          ORDER BY pr.fecha_pago DESC`,
-        [punto_venta_id, fechaDesde, fechaHasta],
+        [caja_sesion_id],
       )
       todos = pagosRep.map((row) =>
         normalizeRow(row, "venta", `Reparación #${row.referencia_id}`),
