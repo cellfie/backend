@@ -579,7 +579,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
-         WHERE cm.caja_sesion_id = ? AND cm.origen = 'ventas_productos'
+         WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
          ORDER BY cm.fecha DESC`,
         [caja_sesion_id],
       )
@@ -611,7 +611,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
-         WHERE cm.caja_sesion_id = ? AND cm.origen = 'ventas_equipos'
+         WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
          ORDER BY cm.fecha DESC`,
         [caja_sesion_id],
       )
@@ -642,7 +642,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
-         WHERE cm.caja_sesion_id = ? AND cm.origen = 'reparaciones'
+         WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
          ORDER BY cm.fecha DESC`,
         [caja_sesion_id],
       )
