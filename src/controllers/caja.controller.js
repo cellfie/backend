@@ -656,7 +656,46 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         ),
       )
     } else {
-      // general: solo movimientos manuales con origen general
+      // general: todos los movimientos de la sesión (ventas productos + ventas equipos + reparaciones + manuales)
+      const [pagosVenta] = await pool.query(
+        `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, v.numero_factura
+         FROM pagos p
+         JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
+         JOIN usuarios u ON p.usuario_id = u.id
+         WHERE p.caja_sesion_id = ? AND p.anulado = 0 AND v.anulada = 0
+         ORDER BY p.fecha DESC`,
+        [caja_sesion_id],
+      )
+      pagosVenta.forEach((row) =>
+        todos.push(normalizeRow(row, "venta", `Venta ${row.numero_factura || row.referencia_id}`)),
+      )
+
+      const [pagosEquipos] = await pool.query(
+        `SELECT pe.id, pe.fecha_pago AS fecha, pe.monto_ars AS monto, pe.tipo_pago, pe.venta_equipo_id AS referencia_id, u.nombre AS usuario_nombre, ve.numero_factura
+         FROM pagos_ventas_equipos pe
+         JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
+         LEFT JOIN usuarios u ON pe.usuario_id = u.id
+         WHERE pe.caja_sesion_id = ? AND pe.anulado = 0 AND ve.anulada = 0
+         ORDER BY pe.fecha_pago DESC`,
+        [caja_sesion_id],
+      )
+      pagosEquipos.forEach((row) =>
+        todos.push(normalizeRow(row, "venta", `Venta equipo ${row.numero_factura || row.referencia_id}`)),
+      )
+
+      const [pagosRep] = await pool.query(
+        `SELECT pr.id, pr.fecha_pago AS fecha, pr.monto, pr.metodo_pago AS tipo_pago, pr.reparacion_id AS referencia_id, u.nombre AS usuario_nombre
+         FROM pagos_reparacion pr
+         JOIN reparaciones r ON pr.reparacion_id = r.id
+         LEFT JOIN usuarios u ON pr.usuario_id = u.id
+         WHERE pr.caja_sesion_id = ?
+         ORDER BY pr.fecha_pago DESC`,
+        [caja_sesion_id],
+      )
+      pagosRep.forEach((row) =>
+        todos.push(normalizeRow(row, "venta", `Reparación #${row.referencia_id}`)),
+      )
+
       const [manual] = await pool.query(
         `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
          FROM caja_movimientos cm
@@ -665,11 +704,13 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          ORDER BY cm.fecha DESC`,
         [caja_sesion_id],
       )
-      todos = manual.map((row) =>
-        normalizeRow(
-          { ...row, tipo_pago: row.tipo_pago },
-          row.tipo === "egreso" ? "egreso" : "ingreso",
-          row.concepto,
+      manual.forEach((row) =>
+        todos.push(
+          normalizeRow(
+            { ...row, tipo_pago: row.tipo_pago },
+            row.tipo === "egreso" ? "egreso" : "ingreso",
+            row.concepto,
+          ),
         ),
       )
     }
