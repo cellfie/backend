@@ -1,25 +1,31 @@
 // Función mejorada para formatear fecha para la base de datos
+// Siempre guarda la fecha en la zona horaria de Argentina (America/Argentina/Buenos_Aires)
+// sin aplicar dobles conversiones que generen desfases de horas.
 export const formatearFechaParaDB = (fecha = null) => {
-  let fechaAUsar;
-  
-  if (!fecha) {
-    // Obtener fecha actual en timezone de Argentina
-    fechaAUsar = new Date();
-  } else {
-    fechaAUsar = new Date(fecha);
-  }
-  
-  // Siempre formatear en timezone de Argentina
-  const argentinaTime = new Date(fechaAUsar.toLocaleString("en-US", { 
-    timeZone: "America/Argentina/Buenos_Aires" 
-  }));
-  
-  return argentinaTime.getFullYear() + '-' +
-    String(argentinaTime.getMonth() + 1).padStart(2, '0') + '-' +
-    String(argentinaTime.getDate()).padStart(2, '0') + ' ' +
-    String(argentinaTime.getHours()).padStart(2, '0') + ':' +
-    String(argentinaTime.getMinutes()).padStart(2, '0') + ':' +
-    String(argentinaTime.getSeconds()).padStart(2, '0');
+  const fechaBase = fecha ? new Date(fecha) : new Date()
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+
+  const partes = formatter.formatToParts(fechaBase)
+  const get = (type) => partes.find((p) => p.type === type)?.value || "00"
+
+  const year = get("year")
+  const month = get("month")
+  const day = get("day")
+  const hour = get("hour")
+  const minute = get("minute")
+  const second = get("second")
+
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
 };
 
 // Función mejorada para mostrar fechas
