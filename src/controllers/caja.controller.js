@@ -1,6 +1,6 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
-import { formatearFechaParaDB } from "../utils/dateUtils.js"
+import { formatearFechaParaDB, fechaParaAPI } from "../utils/dateUtils.js"
 
 /** Verifica si existe una sesión de caja abierta para el punto de venta. Usar antes de registrar ventas/reparaciones/compras. */
 export const tieneCajaAbierta = async (punto_venta_id) => {
@@ -155,8 +155,16 @@ export const getCajaActual = async (req, res) => {
 
     // Nota: para ventas de equipos tu sistema usa pagos_ventas_equipos; se pueden sumar más adelante
 
+    const sesionNormalizada = sesion
+      ? {
+          ...sesion,
+          fecha_apertura: fechaParaAPI(sesion.fecha_apertura),
+          fecha_cierre: sesion.fecha_cierre ? fechaParaAPI(sesion.fecha_cierre) : null,
+        }
+      : null
+
     res.json({
-      sesion,
+      sesion: sesionNormalizada,
       totales: {
         movimientos: totalesMovimientos,
         movimientos_por_origen: movimientosPorOrigen,
@@ -228,10 +236,15 @@ export const abrirCaja = async (req, res) => {
     )
 
     const [sesion] = await pool.query("SELECT * FROM caja_sesiones WHERE id = ?", [result.insertId])
+    const s = sesion[0]
+    if (s) {
+      s.fecha_apertura = fechaParaAPI(s.fecha_apertura)
+      s.fecha_cierre = s.fecha_cierre ? fechaParaAPI(s.fecha_cierre) : null
+    }
 
     res.status(201).json({
       message: "Caja abierta correctamente",
-      sesion: sesion[0],
+      sesion: s,
     })
   } catch (error) {
     console.error("Error al abrir caja:", error)
@@ -306,10 +319,15 @@ export const cerrarCaja = async (req, res) => {
     )
 
     const [sesionActualizada] = await pool.query("SELECT * FROM caja_sesiones WHERE id = ?", [id])
+    const s = sesionActualizada[0]
+    if (s) {
+      s.fecha_apertura = fechaParaAPI(s.fecha_apertura)
+      s.fecha_cierre = s.fecha_cierre ? fechaParaAPI(s.fecha_cierre) : null
+    }
 
     res.json({
       message: "Caja cerrada correctamente",
-      sesion: sesionActualizada[0],
+      sesion: s,
     })
   } catch (error) {
     console.error("Error al cerrar caja:", error)
@@ -367,10 +385,12 @@ export const registrarMovimientoCaja = async (req, res) => {
     )
 
     const [movimiento] = await pool.query("SELECT * FROM caja_movimientos WHERE id = ?", [result.insertId])
+    const mov = movimiento[0]
+    if (mov) mov.fecha = fechaParaAPI(mov.fecha)
 
     res.status(201).json({
       message: "Movimiento de caja registrado correctamente",
-      movimiento: movimiento[0],
+      movimiento: mov,
     })
   } catch (error) {
     console.error("Error al registrar movimiento de caja:", error)
@@ -434,7 +454,12 @@ export const getSesionesCaja = async (req, res) => {
       pool.query(countSql, countParams),
     ])
 
-    const sesiones = sesionesResult[0]
+    const sesionesRaw = sesionesResult[0]
+    const sesiones = sesionesRaw.map((s) => ({
+      ...s,
+      fecha_apertura: fechaParaAPI(s.fecha_apertura),
+      fecha_cierre: s.fecha_cierre ? fechaParaAPI(s.fecha_cierre) : null,
+    }))
     const total = countResult[0][0].total
     const totalPages = Math.ceil(total / Number.parseInt(limit))
 
@@ -508,7 +533,8 @@ export const getMovimientosCaja = async (req, res) => {
       pool.query(countSql, countParams),
     ])
 
-    const movimientos = movsResult[0]
+    const rows = movsResult[0]
+    const movimientos = rows.map((m) => ({ ...m, fecha: fechaParaAPI(m.fecha) }))
     const total = countResult[0][0].total
     const totalPages = Math.ceil(total / Number.parseInt(limit))
 
@@ -531,7 +557,9 @@ export const getMovimientosCaja = async (req, res) => {
   }
 }
 
-// Movimientos completos por tab: ventas (pagos) + movimientos manuales, unificados y paginados
+// Movimientos completos por tab: ventas (pagos) + movimientos manuales, unificados y paginados.
+// Las ventas viven en pagos (con caja_sesion_id); los ingresos/egresos manuales en caja_movimientos.
+// El historial por sesión une ambos; las fechas se normalizan a Argentina (-03:00) para evitar desfase en el frontend.
 export const getMovimientosCompletosCaja = async (req, res) => {
   try {
     const { id: caja_sesion_id } = req.params
@@ -555,7 +583,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
 
     const normalizeRow = (row, tipo, concepto) => ({
       id: row.id,
-      fecha: row.fecha,
+      fecha: fechaParaAPI(row.fecha),
       concepto: concepto || row.concepto || "",
       monto: Number(row.monto) || 0,
       tipo_pago: row.tipo_pago || row.metodo_pago || "",

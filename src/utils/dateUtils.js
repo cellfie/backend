@@ -28,6 +28,33 @@ export const formatearFechaParaDB = (fecha = null) => {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`
 };
 
+/**
+ * Convierte una fecha (Date o string MySQL) a ISO con offset Argentina (-03:00)
+ * para que el frontend muestre la hora correcta sin desfase.
+ * El driver MySQL con timezone 'Z' devuelve Date en UTC; aquí enviamos los mismos
+ * componentes como hora Argentina.
+ */
+export const fechaParaAPI = (value) => {
+  if (value == null) return value
+  if (value instanceof Date) {
+    const y = value.getUTCFullYear()
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0")
+    const d = String(value.getUTCDate()).padStart(2, "0")
+    const h = String(value.getUTCHours()).padStart(2, "0")
+    const min = String(value.getUTCMinutes()).padStart(2, "0")
+    const s = String(value.getUTCSeconds()).padStart(2, "0")
+    return `${y}-${m}-${d}T${h}:${min}:${s}-03:00`
+  }
+  if (typeof value === "string") {
+    const s = value.trim()
+    if (s.includes("T") && (s.includes("-03:00") || s.includes("Z"))) return s
+    const match = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/)
+    if (match) return `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}-03:00`
+    return s
+  }
+  return value
+}
+
 // Función mejorada para mostrar fechas
 export const formatearFechaParaMostrar = (fechaString) => {
   if (!fechaString) return "";
