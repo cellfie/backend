@@ -2,6 +2,7 @@ import { Router } from "express"
 import { check } from "express-validator"
 import {
   getCajaActual,
+  getSesionCajaPorId,
   abrirCaja,
   cerrarCaja,
   registrarMovimientoCaja,
@@ -53,12 +54,13 @@ const validateMovimientoCaja = [
 
 // Rutas principales de caja
 router.get("/actual", verifyToken(["admin", "empleado"]), getCajaActual)
+router.get("/sesion/:id/movimientos-completos", verifyToken(["admin", "empleado"]), getMovimientosCompletosCaja)
+router.get("/sesion/:id", verifyToken(["admin", "empleado"]), getSesionCajaPorId)
 router.post("/abrir", verifyToken(["admin", "empleado"]), validateAbrirCaja, abrirCaja)
 router.put("/:id/cerrar", verifyToken(["admin", "empleado"]), validateCerrarCaja, cerrarCaja)
 router.post("/movimientos", verifyToken(["admin", "empleado"]), validateMovimientoCaja, registrarMovimientoCaja)
 router.get("/sesiones", verifyToken(["admin", "empleado"]), getSesionesCaja)
 router.get("/movimientos", verifyToken(["admin", "empleado"]), getMovimientosCaja)
-router.get("/sesion/:id/movimientos-completos", verifyToken(["admin", "empleado"]), getMovimientosCompletosCaja)
 
 export default router
 

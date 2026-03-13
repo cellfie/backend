@@ -180,6 +180,106 @@ export const getCajaActual = async (req, res) => {
   }
 }
 
+// Obtener una sesión de caja por ID con totales (para historial/detalle)
+export const getSesionCajaPorId = async (req, res) => {
+  try {
+    const { id } = req.params
+    if (!id) return res.status(400).json({ message: "id de sesión es obligatorio" })
+
+    const [sesiones] = await pool.query(
+      `SELECT cs.*, u.nombre AS usuario_apertura_nombre, uc.nombre AS usuario_cierre_nombre, pv.nombre AS punto_venta_nombre
+       FROM caja_sesiones cs
+       JOIN usuarios u ON cs.usuario_apertura_id = u.id
+       JOIN puntos_venta pv ON cs.punto_venta_id = pv.id
+       LEFT JOIN usuarios uc ON cs.usuario_cierre_id = uc.id
+       WHERE cs.id = ?
+       LIMIT 1`,
+      [id],
+    )
+    if (sesiones.length === 0) return res.status(404).json({ message: "Sesión de caja no encontrada" })
+
+    const sesion = sesiones[0]
+    const punto_venta_id = sesion.punto_venta_id
+
+    const [movimientos] = await pool.query(
+      `SELECT tipo, SUM(monto) as total FROM caja_movimientos WHERE caja_sesion_id = ? GROUP BY tipo`,
+      [id],
+    )
+    const totalesMovimientos = movimientos.reduce(
+      (acc, mov) => {
+        if (mov.tipo === "ingreso") acc.ingresos += Number(mov.total) || 0
+        if (mov.tipo === "egreso") acc.egresos += Number(mov.total) || 0
+        return acc
+      },
+      { ingresos: 0, egresos: 0 },
+    )
+
+    const [movimientosPorOrigenRows] = await pool.query(
+      `SELECT origen, tipo, SUM(monto) AS total FROM caja_movimientos WHERE caja_sesion_id = ? GROUP BY origen, tipo`,
+      [id],
+    )
+    const baseOrigen = { ingresos: 0, egresos: 0 }
+    const movimientosPorOrigen = {
+      general: { ...baseOrigen },
+      ventas_productos: { ...baseOrigen },
+      ventas_equipos: { ...baseOrigen },
+      reparaciones: { ...baseOrigen },
+    }
+    movimientosPorOrigenRows.forEach((row) => {
+      const origen = row.origen || "general"
+      if (!movimientosPorOrigen[origen]) movimientosPorOrigen[origen] = { ...baseOrigen }
+      if (row.tipo === "ingreso") movimientosPorOrigen[origen].ingresos += Number(row.total) || 0
+      if (row.tipo === "egreso") movimientosPorOrigen[origen].egresos += Number(row.total) || 0
+    })
+
+    const [totalesVentasProductos] = await pool.query(
+      `SELECT p.tipo_pago, SUM(p.monto) AS total
+       FROM pagos p
+       JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
+       WHERE (p.caja_sesion_id = ? OR (p.caja_sesion_id IS NULL AND p.punto_venta_id = ? AND p.fecha >= ? AND p.fecha <= COALESCE(?, NOW())))
+         AND p.anulado = 0 AND v.anulada = 0
+       GROUP BY p.tipo_pago`,
+      [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+    )
+    const [totalesVentasEquipos] = await pool.query(
+      `SELECT pe.tipo_pago, SUM(pe.monto_ars) AS total
+       FROM pagos_ventas_equipos pe
+       JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
+       WHERE pe.caja_sesion_id = ? AND pe.anulado = 0 AND ve.anulada = 0
+       GROUP BY pe.tipo_pago`,
+      [id],
+    )
+    const [totalesReparaciones] = await pool.query(
+      `SELECT pr.metodo_pago AS tipo_pago, SUM(pr.monto) AS total
+       FROM pagos_reparacion pr
+       JOIN reparaciones r ON pr.reparacion_id = r.id
+       WHERE pr.caja_sesion_id = ?
+       GROUP BY pr.metodo_pago`,
+      [id],
+    )
+
+    const sesionNormalizada = {
+      ...sesion,
+      fecha_apertura: fechaParaAPI(sesion.fecha_apertura),
+      fecha_cierre: sesion.fecha_cierre ? fechaParaAPI(sesion.fecha_cierre) : null,
+    }
+
+    res.json({
+      sesion: sesionNormalizada,
+      totales: {
+        movimientos: totalesMovimientos,
+        movimientos_por_origen: movimientosPorOrigen,
+        ventas_productos: totalesVentasProductos,
+        ventas_equipos: totalesVentasEquipos,
+        reparaciones: totalesReparaciones,
+      },
+    })
+  } catch (error) {
+    console.error("Error al obtener sesión de caja:", error)
+    res.status(500).json({ message: "Error al obtener sesión de caja" })
+  }
+}
+
 // Abrir una nueva sesión de caja
 export const abrirCaja = async (req, res) => {
   const errors = validationResult(req)
@@ -563,7 +663,7 @@ export const getMovimientosCaja = async (req, res) => {
 export const getMovimientosCompletosCaja = async (req, res) => {
   try {
     const { id: caja_sesion_id } = req.params
-    const { origen = "ventas_productos", page = 1, limit = 50 } = req.query
+    const { origen = "ventas_productos", page = 1, limit = 50, tipo: filtroTipo = "todos" } = req.query
 
     if (!caja_sesion_id) {
       return res.status(400).json({ message: "caja_sesion_id es obligatorio" })
@@ -581,7 +681,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
     const fechaDesde = sesion.fecha_apertura
     const fechaHasta = sesion.fecha_cierre || formatearFechaParaDB()
 
-    const normalizeRow = (row, tipo, concepto) => ({
+    const normalizeRow = (row, tipo, concepto, origenRow = null) => ({
       id: row.id,
       fecha: fechaParaAPI(row.fecha),
       concepto: concepto || row.concepto || "",
@@ -589,12 +689,31 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       tipo_pago: row.tipo_pago || row.metodo_pago || "",
       tipo,
       usuario_nombre: row.usuario_nombre || "",
-      origen: row.origen || null,
+      origen: origenRow ?? row.origen ?? null,
     })
 
     let todos = []
 
-    if (origen === "ventas_productos") {
+    if (origen === "manual") {
+      const [manual] = await pool.query(
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+         FROM caja_movimientos cm
+         JOIN usuarios u ON cm.usuario_id = u.id
+         WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
+         ORDER BY cm.fecha DESC`,
+        [caja_sesion_id],
+      )
+      manual.forEach((row) =>
+        todos.push(
+          normalizeRow(
+            { ...row, tipo_pago: row.tipo_pago },
+            row.tipo === "egreso" ? "egreso" : "ingreso",
+            row.concepto,
+            "general",
+          ),
+        ),
+      )
+    } else if (origen === "ventas_productos") {
       const [pagosVenta] = await pool.query(
         `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, v.numero_factura
          FROM pagos p
@@ -754,6 +873,12 @@ export const getMovimientosCompletosCaja = async (req, res) => {
           ),
         ),
       )
+    }
+
+    if (filtroTipo === "ingreso") {
+      todos = todos.filter((m) => m.tipo === "ingreso" || m.tipo === "venta")
+    } else if (filtroTipo === "egreso") {
+      todos = todos.filter((m) => m.tipo === "egreso")
     }
 
     todos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
