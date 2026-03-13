@@ -221,13 +221,35 @@ export const registrarPagoInterno = async (
     )
   }
 
-  // Insertar el pago
+  // Para ventas: obtener sesión de caja abierta y guardar caja_sesion_id (para movimientos por sesión)
+  let caja_sesion_id = null
+  if (tipo_referencia === "venta") {
+    const [sesiones] = await connection.query(
+      `SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`,
+      [punto_venta_id],
+    )
+    if (sesiones.length > 0) {
+      caja_sesion_id = sesiones[0].id
+    }
+  }
+
+  // Insertar el pago (con caja_sesion_id si es venta y hay sesión abierta)
   const [resultPago] = await connection.query(
     `INSERT INTO pagos (
             monto, tipo_pago, referencia_id, tipo_referencia, 
-            cliente_id, usuario_id, punto_venta_id, notas, fecha
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [monto, tipo_pago, referencia_id, tipo_referencia, cliente_id, usuario_id, punto_venta_id, notas],
+            cliente_id, usuario_id, punto_venta_id, notas, fecha, caja_sesion_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+    [
+      monto,
+      tipo_pago,
+      referencia_id,
+      tipo_referencia,
+      cliente_id,
+      usuario_id,
+      punto_venta_id,
+      notas,
+      caja_sesion_id,
+    ],
   )
 
   return {

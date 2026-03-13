@@ -90,19 +90,26 @@ export const getCajaActual = async (req, res) => {
       }
     })
 
-    // Totales de pagos de VENTAS DE PRODUCTOS (tipo_referencia = 'venta')
+    // Totales de pagos de VENTAS DE PRODUCTOS: por sesión (caja_sesion_id) o por rango de fechas si es legacy (NULL)
     const [totalesVentasProductos] = await pool.query(
       `SELECT 
           p.tipo_pago,
           SUM(p.monto) AS total
         FROM pagos p
         JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
-        WHERE p.punto_venta_id = ?
-          AND p.fecha BETWEEN ? AND COALESCE(?, NOW())
+        WHERE (
+          p.caja_sesion_id = ?
+          OR (
+            p.caja_sesion_id IS NULL
+            AND p.punto_venta_id = ?
+            AND p.fecha >= ?
+            AND p.fecha <= COALESCE(?, NOW())
+          )
+        )
           AND p.anulado = 0
           AND v.anulada = 0
         GROUP BY p.tipo_pago`,
-      [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+      [sesion.id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
     // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos) ligados a la sesión actual
@@ -565,11 +572,17 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          FROM pagos p
          JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
          JOIN usuarios u ON p.usuario_id = u.id
-         WHERE p.punto_venta_id = ?
-           AND p.fecha >= ? AND p.fecha <= ?
+         WHERE (
+           p.caja_sesion_id = ?
+           OR (
+             p.caja_sesion_id IS NULL
+             AND p.punto_venta_id = ?
+             AND p.fecha >= ? AND p.fecha <= ?
+           )
+         )
            AND p.anulado = 0 AND v.anulada = 0
          ORDER BY p.fecha DESC`,
-        [punto_venta_id, fechaDesde, fechaHasta],
+        [caja_sesion_id, punto_venta_id, fechaDesde, fechaHasta],
       )
       todos = pagosVenta.map((row) =>
         normalizeRow(row, "venta", `Venta ${row.numero_factura || row.referencia_id}`),
