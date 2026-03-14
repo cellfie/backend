@@ -21,6 +21,7 @@ export const getEquipos = async (req, res) => {
                 e.fecha_actualizacion,
                 e.tipo_cambio,
                 e.tipo_cambio_original,
+                e.precio_moneda,
                 e.vendido,
                 e.venta_id,
                 e.es_canje,
@@ -66,6 +67,7 @@ export const getEquipoById = async (req, res) => {
                 e.fecha_actualizacion,
                 e.tipo_cambio,
                 e.tipo_cambio_original,
+                e.precio_moneda,
                 e.vendido,
                 e.venta_id,
                 e.es_canje,
@@ -113,6 +115,7 @@ export const createEquipo = async (req, res) => {
     color,
     bateria,
     precio,
+    precio_moneda = "USD",
     descripcion,
     imei,
     fecha_ingreso,
@@ -121,6 +124,8 @@ export const createEquipo = async (req, res) => {
     cliente_canje_id,
     venta_canje_id,
   } = req.body
+
+  const moneda = precio_moneda === "ARS" ? "ARS" : "USD"
 
   try {
     // Verificar si ya existe un equipo con el mismo IMEI
@@ -148,14 +153,14 @@ export const createEquipo = async (req, res) => {
     // Usar la función utilitaria para obtener la fecha actual
     const fechaCreacion = formatearFechaParaDB()
 
-    // Insertar el equipo con fecha_creacion y fecha_actualizacion
+    // Insertar el equipo con fecha_creacion y fecha_actualizacion. precio según moneda: USD o ARS.
     const [result] = await pool.query(
       `INSERT INTO equipos (
-            marca, modelo, memoria, color, bateria, precio, descripcion, 
+            marca, modelo, memoria, color, bateria, precio, precio_moneda, descripcion, 
             imei, fecha_ingreso, punto_venta_id, tipo_cambio, tipo_cambio_original, 
             vendido, venta_id, es_canje, cliente_canje_id, venta_canje_id,
             fecha_creacion, fecha_actualizacion
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         marca,
         modelo,
@@ -163,6 +168,7 @@ export const createEquipo = async (req, res) => {
         color || null,
         bateria || null,
         precio,
+        moneda,
         descripcion || null,
         imei,
         fecha_ingreso,
@@ -213,6 +219,7 @@ export const updateEquipo = async (req, res) => {
     color,
     bateria,
     precio,
+    precio_moneda,
     descripcion,
     imei,
     fecha_ingreso,
@@ -222,6 +229,7 @@ export const updateEquipo = async (req, res) => {
     // IMPORTANTE: No recibir es_canje, cliente_canje_id, venta_canje_id del body
     // para preservar los valores originales
   } = req.body
+  const moneda = precio_moneda === "ARS" ? "ARS" : precio_moneda === "USD" ? "USD" : undefined
 
   try {
     // Verificar si el equipo existe y obtener sus datos actuales
@@ -262,6 +270,7 @@ export const updateEquipo = async (req, res) => {
             color = ?, 
             bateria = ?, 
             precio = ?, 
+            precio_moneda = COALESCE(?, precio_moneda),
             descripcion = ?, 
             imei = ?, 
             fecha_ingreso = ?,
@@ -278,6 +287,7 @@ export const updateEquipo = async (req, res) => {
         color !== undefined ? color : equipoActual.color,
         bateria !== undefined ? bateria : equipoActual.bateria,
         precio !== undefined ? precio : equipoActual.precio,
+        moneda,
         descripcion !== undefined ? descripcion : equipoActual.descripcion,
         imei || equipoActual.imei,
         fecha_ingreso || equipoActual.fecha_ingreso,
@@ -341,6 +351,7 @@ export const searchEquipos = async (req, res) => {
                 e.fecha_actualizacion,
                 e.tipo_cambio,
                 e.tipo_cambio_original,
+                e.precio_moneda,
                 e.vendido,
                 e.venta_id,
                 e.es_canje,
@@ -484,6 +495,7 @@ export const getEquiposPaginados = async (req, res) => {
         e.fecha_actualizacion,
         e.tipo_cambio,
         e.tipo_cambio_original,
+        e.precio_moneda,
         e.vendido,
         e.venta_id,
         e.es_canje,

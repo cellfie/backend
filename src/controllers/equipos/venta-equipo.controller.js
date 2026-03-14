@@ -288,8 +288,11 @@ export const createVentaEquipo = async (req, res) => {
     const tipoCambio = tcRows.length > 0 ? Number.parseFloat(tcRows[0].valor) : equipos[0].tipo_cambio
 
     const equipo = equipos[0]
-    const precioUSD = equipo.precio
-    const precioARS = precioUSD * tipoCambio
+    const precioMoneda = equipo.precio_moneda === "ARS" ? "ARS" : "USD"
+    const precioUSD =
+      precioMoneda === "ARS" ? Number(equipo.precio) / tipoCambio : Number(equipo.precio)
+    const precioARS =
+      precioMoneda === "ARS" ? Number(equipo.precio) : Number(equipo.precio) * tipoCambio
 
     // Calcular descuento por plan canje
     let descuentoPlanCanje = 0
