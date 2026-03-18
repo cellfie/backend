@@ -506,6 +506,8 @@ export const getSesionesCaja = async (req, res) => {
       limit = 20,
       punto_venta_id,
       estado, // abierta / cerrada / todos
+      fecha_inicio, // YYYY-MM-DD
+      fecha_fin, // YYYY-MM-DD
     } = req.query
 
     const offset = (Number.parseInt(page) - 1) * Number.parseInt(limit)
@@ -524,6 +526,19 @@ export const getSesionesCaja = async (req, res) => {
       where += " AND cs.estado = ?"
       params.push(estado)
       countParams.push(estado)
+    }
+
+    // Filtro por rango de fechas (sobre fecha_apertura)
+    if (fecha_inicio) {
+      where += " AND cs.fecha_apertura >= ?"
+      params.push(`${fecha_inicio} 00:00:00`)
+      countParams.push(`${fecha_inicio} 00:00:00`)
+    }
+
+    if (fecha_fin) {
+      where += " AND cs.fecha_apertura <= ?"
+      params.push(`${fecha_fin} 23:59:59`)
+      countParams.push(`${fecha_fin} 23:59:59`)
     }
 
     const sql = `
