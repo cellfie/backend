@@ -1,15 +1,9 @@
 import { Router } from 'express';
 import { check } from 'express-validator';
-import { register, login, logout } from '../controllers/auth.controllers.js';
+import { login, logout } from '../controllers/auth.controllers.js';
 import { verifyToken } from '../middlewares/verifyToken.js';
 
 const router = Router();
-
-// Validación de datos para el registro
-const validateRegisterSchema = [
-    check('nombre').notEmpty().withMessage('El nombre es obligatorio'),
-    check('password').isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
-];
 
 // Validación de datos para el login
 const validateLoginSchema = [
@@ -36,7 +30,6 @@ router.get('/check-session', verifyToken(), (req, res) => {
 });
 
 // Rutas de autenticación
-router.post('/register', validateRegisterSchema, register);
 router.post('/login', validateLoginSchema, login);
 router.post('/logout', logout);
 

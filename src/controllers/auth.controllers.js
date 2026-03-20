@@ -58,15 +58,23 @@ export const login = async (req, res) => {
 
         const user = rows[0];
 
+        // Si el usuario está deshabilitado, no permitir login
+        const activo = user.activo ?? 1
+        if (activo === 0) {
+            return res.status(403).json({ message: "Usuario deshabilitado" })
+        }
+
         // Verificar la contraseña
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({ message: 'La contraseña es incorrecta' });
         } 
 
+        const role = user.rol || "empleado"
+
         // Generar un token de acceso
         const token = jwt.sign(
-            { id: user.id, nombre: user.nombre, role: user.rol }, 
+            { id: user.id, nombre: user.nombre, role, rol: role }, 
             JWT_SECRET,
             { expiresIn: '8h' }
         );
@@ -82,7 +90,7 @@ export const login = async (req, res) => {
         res.status(200).json({
             id: user.id,
             nombre: user.nombre,
-            role: user.rol, 
+            role,
         });
     } catch (error) {
         console.error(error);

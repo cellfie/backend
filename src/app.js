@@ -28,6 +28,7 @@ import perdidasRoutes from "./routes/perdidas.routes.js"
 import repuestosRoutes from "./routes/repuesto.routes.js"
 import notasRoutes from "./routes/notas.routes.js"
 import preciosCanjesRoutes from "./routes/precios-canjes.routes.js"
+import usuariosRoutes from "./routes/usuarios.routes.js"
 
 import { FRONTEND_URL, FRONTEND_URL_WWW, FRONTEND_URL_DEV } from "./config.js"
 
@@ -88,6 +89,7 @@ app.use("/api/perdidas", perdidasRoutes)
 app.use("/api/repuestos", repuestosRoutes)
 app.use("/api/notas", notasRoutes)
 app.use("/api/precios-canjes", preciosCanjesRoutes)
+app.use("/api/usuarios", usuariosRoutes)
 
 // Middleware para manejar errores
 app.use((err, req, res, next) => {
