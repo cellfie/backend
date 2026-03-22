@@ -2,7 +2,75 @@ import pool from "../db.js"
 import { validationResult } from "express-validator"
 import { formatearFechaParaDB, fechaParaAPI } from "../utils/dateUtils.js"
 
-/** Verifica si existe una sesión de caja abierta para el punto de venta. Usar antes de registrar ventas/reparaciones/compras. */
+/**
+ * Suma los totales de filas tipo { total } (queries agrupadas por tipo_pago).
+ */
+function sumarTotalesFilas(rows) {
+  if (!Array.isArray(rows)) return 0
+  return rows.reduce((s, r) => s + (Number(r.total) || 0), 0)
+}
+
+/**
+ * Saldo te?rico para arqueo = mismo criterio que el "Balance total" en la UI de caja:
+ * apertura + ventas (productos + equipos + reparaciones) + ingresos manuales (origen "general")
+ * ? egresos manuales (origen "general").
+ * No usar solo la suma global de caja_movimientos (excluir?a ventas registradas en pagos).
+ */
+async function computeSaldoTeoricoArqueo(sesion) {
+  const id = sesion.id
+  const punto_venta_id = sesion.punto_venta_id
+
+  const [totalesVentasProductos] = await pool.query(
+    `SELECT p.tipo_pago, SUM(p.monto) AS total
+     FROM pagos p
+     JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
+     WHERE (p.caja_sesion_id = ? OR (p.caja_sesion_id IS NULL AND p.punto_venta_id = ? AND p.fecha >= ? AND p.fecha <= COALESCE(?, NOW())))
+       AND p.anulado = 0 AND v.anulada = 0
+     GROUP BY p.tipo_pago`,
+    [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+  )
+  const [totalesVentasEquipos] = await pool.query(
+    `SELECT pe.tipo_pago, SUM(pe.monto_ars) AS total
+     FROM pagos_ventas_equipos pe
+     JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
+     WHERE pe.caja_sesion_id = ? AND pe.anulado = 0 AND ve.anulada = 0
+     GROUP BY pe.tipo_pago`,
+    [id],
+  )
+  const [totalesReparaciones] = await pool.query(
+    `SELECT pr.metodo_pago AS tipo_pago, SUM(pr.monto) AS total
+     FROM pagos_reparacion pr
+     JOIN reparaciones r ON pr.reparacion_id = r.id
+     WHERE pr.caja_sesion_id = ?
+     GROUP BY pr.metodo_pago`,
+    [id],
+  )
+
+  const [movimientosPorOrigenRows] = await pool.query(
+    `SELECT origen, tipo, SUM(monto) AS total FROM caja_movimientos WHERE caja_sesion_id = ? GROUP BY origen, tipo`,
+    [id],
+  )
+  let ingGeneral = 0
+  let egrGeneral = 0
+  movimientosPorOrigenRows.forEach((row) => {
+    const origen = row.origen || "general"
+    if (origen !== "general") return
+    if (row.tipo === "ingreso") ingGeneral += Number(row.total) || 0
+    if (row.tipo === "egreso") egrGeneral += Number(row.total) || 0
+  })
+
+  const montoApertura = Number(sesion.monto_apertura) || 0
+  return (
+    montoApertura +
+    sumarTotalesFilas(totalesVentasProductos) +
+    sumarTotalesFilas(totalesVentasEquipos) +
+    sumarTotalesFilas(totalesReparaciones) +
+    ingGeneral -
+    egrGeneral
+  )
+}
+
+/** Verifica si existe una sesi?n de caja abierta para el punto de venta. Usar antes de registrar ventas/reparaciones/compras. */
 export const tieneCajaAbierta = async (punto_venta_id) => {
   const [rows] = await pool.query(
     "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' LIMIT 1",
@@ -11,7 +79,7 @@ export const tieneCajaAbierta = async (punto_venta_id) => {
   return rows.length > 0
 }
 
-// Obtener la sesión de caja abierta para un punto de venta (si existe)
+// Obtener la sesi?n de caja abierta para un punto de venta (si existe)
 export const getCajaActual = async (req, res) => {
   try {
     const { punto_venta_id } = req.query
@@ -90,7 +158,7 @@ export const getCajaActual = async (req, res) => {
       }
     })
 
-    // Totales de pagos de VENTAS DE PRODUCTOS: por sesión (caja_sesion_id) o por rango de fechas si es legacy (NULL)
+    // Totales de pagos de VENTAS DE PRODUCTOS: por sesi?n (caja_sesion_id) o por rango de fechas si es legacy (NULL)
     const [totalesVentasProductos] = await pool.query(
       `SELECT 
           p.tipo_pago,
@@ -112,7 +180,7 @@ export const getCajaActual = async (req, res) => {
       [sesion.id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
-    // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos) ligados a la sesión actual
+    // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos) ligados a la sesi?n actual
     const [totalesVentasEquipos] = await pool.query(
       `SELECT 
           pe.tipo_pago,
@@ -141,7 +209,7 @@ export const getCajaActual = async (req, res) => {
       [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
-    // Totales de pagos de REPARACIONES (tabla pagos_reparacion) ligados a la sesión actual
+    // Totales de pagos de REPARACIONES (tabla pagos_reparacion) ligados a la sesi?n actual
     const [totalesReparaciones] = await pool.query(
       `SELECT 
           pr.metodo_pago AS tipo_pago,
@@ -153,7 +221,7 @@ export const getCajaActual = async (req, res) => {
       [sesion.id],
     )
 
-    // Nota: para ventas de equipos tu sistema usa pagos_ventas_equipos; se pueden sumar más adelante
+    // Nota: para ventas de equipos tu sistema usa pagos_ventas_equipos; se pueden sumar m?s adelante
 
     const sesionNormalizada = sesion
       ? {
@@ -180,11 +248,11 @@ export const getCajaActual = async (req, res) => {
   }
 }
 
-// Obtener una sesión de caja por ID con totales (para historial/detalle)
+// Obtener una sesi?n de caja por ID con totales (para historial/detalle)
 export const getSesionCajaPorId = async (req, res) => {
   try {
     const { id } = req.params
-    if (!id) return res.status(400).json({ message: "id de sesión es obligatorio" })
+    if (!id) return res.status(400).json({ message: "id de sesi?n es obligatorio" })
 
     const [sesiones] = await pool.query(
       `SELECT cs.*, u.nombre AS usuario_apertura_nombre, uc.nombre AS usuario_cierre_nombre, pv.nombre AS punto_venta_nombre
@@ -196,7 +264,7 @@ export const getSesionCajaPorId = async (req, res) => {
        LIMIT 1`,
       [id],
     )
-    if (sesiones.length === 0) return res.status(404).json({ message: "Sesión de caja no encontrada" })
+    if (sesiones.length === 0) return res.status(404).json({ message: "Sesi?n de caja no encontrada" })
 
     const sesion = sesiones[0]
     const punto_venta_id = sesion.punto_venta_id
@@ -275,12 +343,12 @@ export const getSesionCajaPorId = async (req, res) => {
       },
     })
   } catch (error) {
-    console.error("Error al obtener sesión de caja:", error)
-    res.status(500).json({ message: "Error al obtener sesión de caja" })
+    console.error("Error al obtener sesi?n de caja:", error)
+    res.status(500).json({ message: "Error al obtener sesi?n de caja" })
   }
 }
 
-// Abrir una nueva sesión de caja
+// Abrir una nueva sesi?n de caja
 export const abrirCaja = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -313,11 +381,11 @@ export const abrirCaja = async (req, res) => {
       if (esMismoDia) {
         return res.status(400).json({ message: "Ya existe una caja abierta para este punto de venta" })
       }
-      // Sesión abierta de otro día: cerrarla para poder abrir una nueva desde 0
+      // Sesi?n abierta de otro d?a: cerrarla para poder abrir una nueva desde 0
       const fechaCierre = formatearFechaParaDB()
       await pool.query(
         `UPDATE caja_sesiones SET estado = 'cerrada', usuario_cierre_id = ?, fecha_cierre = ?, notas_cierre = ? WHERE id = ?`,
-        [usuario_id, fechaCierre, "Cierre automático al abrir nueva sesión del día.", sesionVigente.id],
+        [usuario_id, fechaCierre, "Cierre autom?tico al abrir nueva sesi?n del d?a.", sesionVigente.id],
       )
     }
 
@@ -352,7 +420,7 @@ export const abrirCaja = async (req, res) => {
   }
 }
 
-// Cerrar una sesión de caja
+// Cerrar una sesi?n de caja
 export const cerrarCaja = async (req, res) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -372,38 +440,20 @@ export const cerrarCaja = async (req, res) => {
     const [sesiones] = await pool.query("SELECT * FROM caja_sesiones WHERE id = ?", [id])
 
     if (sesiones.length === 0) {
-      return res.status(404).json({ message: "Sesión de caja no encontrada" })
+      return res.status(404).json({ message: "Sesi?n de caja no encontrada" })
     }
 
     const sesion = sesiones[0]
 
     if (sesion.estado === "cerrada") {
-      return res.status(400).json({ message: "La caja ya está cerrada" })
+      return res.status(400).json({ message: "La caja ya est? cerrada" })
     }
 
     const fechaCierre = formatearFechaParaDB()
 
-    // Calcular diferencia simple: monto_cierre - monto_apertura - (ingresos - egresos)
-    const [movimientos] = await pool.query(
-      `SELECT tipo, SUM(monto) as total
-       FROM caja_movimientos
-       WHERE caja_sesion_id = ?
-       GROUP BY tipo`,
-      [id],
-    )
-
-    const totalesMovimientos = movimientos.reduce(
-      (acc, mov) => {
-        if (mov.tipo === "ingreso") acc.ingresos += Number(mov.total) || 0
-        if (mov.tipo === "egreso") acc.egresos += Number(mov.total) || 0
-        return acc
-      },
-      { ingresos: 0, egresos: 0 },
-    )
-
-    const montoApertura = Number(sesion.monto_apertura) || 0
     const montoCierreNum = Number(monto_cierre) || 0
-    const saldoTeorico = montoApertura + totalesMovimientos.ingresos - totalesMovimientos.egresos
+    // Mismo saldo te?rico que el balance total / pantalla de cierre (ventas + reparaciones + manuales general).
+    const saldoTeorico = await computeSaldoTeoricoArqueo(sesion)
     const diferencia = montoCierreNum - saldoTeorico
 
     await pool.query(
@@ -454,7 +504,7 @@ export const registrarMovimientoCaja = async (req, res) => {
     const [sesiones] = await pool.query("SELECT * FROM caja_sesiones WHERE id = ?", [caja_sesion_id])
 
     if (sesiones.length === 0) {
-      return res.status(404).json({ message: "Sesión de caja no encontrada" })
+      return res.status(404).json({ message: "Sesi?n de caja no encontrada" })
     }
 
     const sesion = sesiones[0]
@@ -597,7 +647,7 @@ export const getSesionesCaja = async (req, res) => {
   }
 }
 
-// Historial de movimientos de una sesión de caja (paginado)
+// Historial de movimientos de una sesi?n de caja (paginado)
 export const getMovimientosCaja = async (req, res) => {
   try {
     const { caja_sesion_id, page = 1, limit = 20, tipo, origen } = req.query
@@ -674,7 +724,7 @@ export const getMovimientosCaja = async (req, res) => {
 
 // Movimientos completos por tab: ventas (pagos) + movimientos manuales, unificados y paginados.
 // Las ventas viven en pagos (con caja_sesion_id); los ingresos/egresos manuales en caja_movimientos.
-// El historial por sesión une ambos; las fechas se normalizan a Argentina (-03:00) para evitar desfase en el frontend.
+// El historial por sesi?n une ambos; las fechas se normalizan a Argentina (-03:00) para evitar desfase en el frontend.
 export const getMovimientosCompletosCaja = async (req, res) => {
   try {
     const { id: caja_sesion_id } = req.params
@@ -689,7 +739,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       [caja_sesion_id],
     )
     if (sesiones.length === 0) {
-      return res.status(404).json({ message: "Sesión de caja no encontrada" })
+      return res.status(404).json({ message: "Sesi?n de caja no encontrada" })
     }
     const sesion = sesiones[0]
     const punto_venta_id = sesion.punto_venta_id
@@ -810,7 +860,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         [caja_sesion_id],
       )
       todos = pagosRep.map((row) =>
-        normalizeRow(row, "venta", `Reparación #${row.referencia_id}`),
+        normalizeRow(row, "venta", `Reparaci?n #${row.referencia_id}`),
       )
 
       const [manual] = await pool.query(
@@ -831,7 +881,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         ),
       )
     } else {
-      // general: todos los movimientos de la sesión (ventas productos + ventas equipos + reparaciones + manuales)
+      // general: todos los movimientos de la sesi?n (ventas productos + ventas equipos + reparaciones + manuales)
       const [pagosVenta] = await pool.query(
         `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, v.numero_factura
          FROM pagos p
@@ -868,7 +918,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         [caja_sesion_id],
       )
       pagosRep.forEach((row) =>
-        todos.push(normalizeRow(row, "venta", `Reparación #${row.referencia_id}`)),
+        todos.push(normalizeRow(row, "venta", `Reparaci?n #${row.referencia_id}`)),
       )
 
       const [manual] = await pool.query(
