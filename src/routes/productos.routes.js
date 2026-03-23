@@ -26,6 +26,12 @@ const validateProducto = [
     .withMessage("El precio debe ser un número")
     .custom((value) => value > 0)
     .withMessage("El precio debe ser mayor a cero"),
+  check("precio_costo")
+    .optional()
+    .isNumeric()
+    .withMessage("El precio de costo debe ser un número")
+    .custom((value) => Number(value) >= 0)
+    .withMessage("El precio de costo no puede ser negativo"),
 ]
 
 // Rutas

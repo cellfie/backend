@@ -16,6 +16,12 @@ const ensurePriceIsNumber = (price) => {
   return 0 // Valor por defecto si no se puede convertir
 }
 
+const ensureNonNegativeNumber = (value) => {
+  const numeric = ensurePriceIsNumber(value)
+  if (Number.isNaN(numeric) || !Number.isFinite(numeric)) return 0
+  return numeric < 0 ? 0 : numeric
+}
+
 const verificarCodigoDuplicado = async (connection, codigo, punto_venta_id, productoId = null) => {
   let query = "SELECT id FROM productos WHERE codigo = ? AND punto_venta_id = ?"
   const params = [codigo, punto_venta_id]
@@ -141,6 +147,7 @@ export const getProductosPaginados = async (req, res) => {
         p.nombre, 
         p.descripcion, 
         p.precio, 
+        p.precio_costo,
         p.fecha_creacion,
         p.fecha_actualizacion,
         c.nombre AS categoria,
@@ -210,6 +217,7 @@ export const searchProductosRapido = async (req, res) => {
         p.codigo,
         p.nombre,
         p.precio,
+        p.precio_costo,
         p.punto_venta_id,
         pv.nombre AS punto_venta,
         COALESCE(i.stock, 0) AS stock
@@ -243,6 +251,7 @@ export const getProductoById = async (req, res) => {
         p.nombre, 
         p.descripcion, 
         p.precio, 
+        p.precio_costo,
         p.fecha_creacion,
         p.fecha_actualizacion,
         c.nombre AS categoria,
@@ -301,10 +310,11 @@ export const createProducto = async (req, res) => {
     return res.status(400).json({ errors: errors.array() })
   }
 
-  const { codigo, nombre, descripcion, precio, categoria_id, punto_venta_id, stock } = req.body
+  const { codigo, nombre, descripcion, precio, precio_costo, categoria_id, punto_venta_id, stock } = req.body
 
   // Asegurar que el precio sea un número
   const precioNumerico = ensurePriceIsNumber(precio)
+  const precioCostoNumerico = ensureNonNegativeNumber(precio_costo)
 
   const connection = await pool.getConnection()
 
@@ -323,8 +333,8 @@ export const createProducto = async (req, res) => {
     const fechaActual = formatearFechaParaDB()
 
     const [result] = await connection.query(
-      "INSERT INTO productos (codigo, nombre, descripcion, precio, categoria_id, punto_venta_id, fecha_creacion, fecha_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [codigo, nombre, descripcion, precioNumerico, categoria_id || null, punto_venta_id, fechaActual, fechaActual],
+      "INSERT INTO productos (codigo, nombre, descripcion, precio, precio_costo, categoria_id, punto_venta_id, fecha_creacion, fecha_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [codigo, nombre, descripcion, precioNumerico, precioCostoNumerico, categoria_id || null, punto_venta_id, fechaActual, fechaActual],
     )
 
     const productoId = result.insertId
@@ -371,10 +381,11 @@ export const updateProducto = async (req, res) => {
   }
 
   const { id } = req.params
-  const { codigo, nombre, descripcion, precio, categoria_id, punto_venta_id, stock } = req.body
+  const { codigo, nombre, descripcion, precio, precio_costo, categoria_id, punto_venta_id, stock } = req.body
 
   // Asegurar que el precio sea un número
   const precioNumerico = ensurePriceIsNumber(precio)
+  const precioCostoNumerico = ensureNonNegativeNumber(precio_costo)
 
   const connection = await pool.getConnection()
 
@@ -382,7 +393,7 @@ export const updateProducto = async (req, res) => {
     await connection.beginTransaction()
 
     // Verificar si el producto existe y obtener su precio actual
-    const [productos] = await connection.query("SELECT precio, punto_venta_id FROM productos WHERE id = ?", [id])
+    const [productos] = await connection.query("SELECT precio, precio_costo, punto_venta_id FROM productos WHERE id = ?", [id])
     if (productos.length === 0) {
       await connection.rollback()
       return res.status(404).json({ message: "Producto no encontrado" })
@@ -403,17 +414,19 @@ export const updateProducto = async (req, res) => {
     // Esto evita problemas de redondeo o formato
     const precioActual = productoActual.precio
     const precioFinal = precio === precioActual ? precioActual : precioNumerico
+    const precioCostoActual = productoActual.precio_costo
+    const precioCostoFinal = precio_costo === precioCostoActual ? precioCostoActual : precioCostoNumerico
 
     // Usar la función utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
     const updateQuery = punto_venta_id
-      ? "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, categoria_id = ?, punto_venta_id = ?, fecha_actualizacion = ? WHERE id = ?"
-      : "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, categoria_id = ?, fecha_actualizacion = ? WHERE id = ?"
+      ? "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, precio_costo = ?, categoria_id = ?, punto_venta_id = ?, fecha_actualizacion = ? WHERE id = ?"
+      : "UPDATE productos SET codigo = ?, nombre = ?, descripcion = ?, precio = ?, precio_costo = ?, categoria_id = ?, fecha_actualizacion = ? WHERE id = ?"
 
     const updateParams = punto_venta_id
-      ? [codigo, nombre, descripcion, precioFinal, categoria_id || null, punto_venta_id, fechaActual, id]
-      : [codigo, nombre, descripcion, precioFinal, categoria_id || null, fechaActual, id]
+      ? [codigo, nombre, descripcion, precioFinal, precioCostoFinal, categoria_id || null, punto_venta_id, fechaActual, id]
+      : [codigo, nombre, descripcion, precioFinal, precioCostoFinal, categoria_id || null, fechaActual, id]
 
     await connection.query(updateQuery, updateParams)
 
