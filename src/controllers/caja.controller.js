@@ -31,6 +31,24 @@ function sumarTotalesFilas(rows) {
   return rows.reduce((s, r) => s + (Number(r.total) || 0), 0)
 }
 
+/** Expone desglose_cierre parseado y oculta la columna cruda JSON en la API */
+function normalizarSesionCajaParaAPI(sesion) {
+  if (!sesion) return sesion
+  const s = { ...sesion }
+  if (s.desglose_cierre_json != null && s.desglose_cierre_json !== "") {
+    try {
+      const raw = s.desglose_cierre_json
+      s.desglose_cierre = typeof raw === "string" ? JSON.parse(raw) : raw
+    } catch {
+      s.desglose_cierre = null
+    }
+  } else {
+    s.desglose_cierre = null
+  }
+  delete s.desglose_cierre_json
+  return s
+}
+
 /**
  * Saldo te?rico para arqueo = mismo criterio que el "Balance total" en la UI de caja:
  * apertura + ventas (productos + equipos + reparaciones) + ingresos manuales (origen "general")
@@ -283,11 +301,11 @@ export const getCajaActual = async (req, res) => {
     )
 
     const sesionNormalizada = sesion
-      ? {
+      ? normalizarSesionCajaParaAPI({
           ...sesion,
           fecha_apertura: fechaParaAPI(sesion.fecha_apertura),
           fecha_cierre: sesion.fecha_cierre ? fechaParaAPI(sesion.fecha_cierre) : null,
-        }
+        })
       : null
 
     res.json({
@@ -401,11 +419,11 @@ export const getSesionCajaPorId = async (req, res) => {
       [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
-    const sesionNormalizada = {
+    const sesionNormalizada = normalizarSesionCajaParaAPI({
       ...sesion,
       fecha_apertura: fechaParaAPI(sesion.fecha_apertura),
       fecha_cierre: sesion.fecha_cierre ? fechaParaAPI(sesion.fecha_cierre) : null,
-    }
+    })
 
     res.json({
       sesion: sesionNormalizada,
@@ -480,10 +498,11 @@ export const abrirCaja = async (req, res) => {
     )
 
     const [sesion] = await pool.query("SELECT * FROM caja_sesiones WHERE id = ?", [result.insertId])
-    const s = sesion[0]
+    let s = sesion[0]
     if (s) {
       s.fecha_apertura = fechaParaAPI(s.fecha_apertura)
       s.fecha_cierre = s.fecha_cierre ? fechaParaAPI(s.fecha_cierre) : null
+      s = normalizarSesionCajaParaAPI(s)
     }
 
     res.status(201).json({
@@ -504,7 +523,7 @@ export const cerrarCaja = async (req, res) => {
   }
 
   const { id } = req.params
-  const { monto_cierre, notas_cierre } = req.body
+  const { monto_cierre, notas_cierre, desglose_cierre } = req.body
 
   if (!req.user || !req.user.id) {
     return res.status(401).json({ message: "Usuario no autenticado" })
@@ -532,6 +551,15 @@ export const cerrarCaja = async (req, res) => {
     const saldoTeorico = await computeSaldoTeoricoArqueo(sesion)
     const diferencia = montoCierreNum - saldoTeorico
 
+    let desgloseJson = null
+    if (desglose_cierre != null && typeof desglose_cierre === "object") {
+      try {
+        desgloseJson = JSON.stringify(desglose_cierre)
+      } catch {
+        desgloseJson = null
+      }
+    }
+
     await pool.query(
       `UPDATE caja_sesiones
        SET estado = 'cerrada',
@@ -539,16 +567,18 @@ export const cerrarCaja = async (req, res) => {
            fecha_cierre = ?,
            monto_cierre = ?,
            diferencia = ?,
-           notas_cierre = ?
+           notas_cierre = ?,
+           desglose_cierre_json = ?
        WHERE id = ?`,
-      [usuario_id, fechaCierre, montoCierreNum, diferencia, notas_cierre || null, id],
+      [usuario_id, fechaCierre, montoCierreNum, diferencia, notas_cierre || null, desgloseJson, id],
     )
 
     const [sesionActualizada] = await pool.query("SELECT * FROM caja_sesiones WHERE id = ?", [id])
-    const s = sesionActualizada[0]
+    let s = sesionActualizada[0]
     if (s) {
       s.fecha_apertura = fechaParaAPI(s.fecha_apertura)
       s.fecha_cierre = s.fecha_cierre ? fechaParaAPI(s.fecha_cierre) : null
+      s = normalizarSesionCajaParaAPI(s)
     }
 
     res.json({
@@ -696,11 +726,13 @@ export const getSesionesCaja = async (req, res) => {
     ])
 
     const sesionesRaw = sesionesResult[0]
-    const sesiones = sesionesRaw.map((s) => ({
-      ...s,
-      fecha_apertura: fechaParaAPI(s.fecha_apertura),
-      fecha_cierre: s.fecha_cierre ? fechaParaAPI(s.fecha_cierre) : null,
-    }))
+    const sesiones = sesionesRaw.map((s) =>
+      normalizarSesionCajaParaAPI({
+        ...s,
+        fecha_apertura: fechaParaAPI(s.fecha_apertura),
+        fecha_cierre: s.fecha_cierre ? fechaParaAPI(s.fecha_cierre) : null,
+      }),
+    )
     const total = countResult[0][0].total
     const totalPages = Math.ceil(total / Number.parseInt(limit))
 
