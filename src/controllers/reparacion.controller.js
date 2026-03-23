@@ -5,6 +5,16 @@ import { formatearFechaParaDB } from "../utils/dateUtils.js" // ← AGREGAR ESTA
 // Importar la función para registrar acciones en el historial
 import { registrarAccion } from "./historial-acciones.controller.js"
 
+/** Etiqueta legible para historial (el valor en BD sigue siendo el código: viumi, tarjeta, etc.). */
+function etiquetaMetodoPagoParaHistorial(metodo) {
+  if (metodo === "efectivo") return "efectivo"
+  if (metodo === "tarjeta") return "tarjeta"
+  if (metodo === "viumi") return "ViuMi"
+  if (metodo === "transferencia") return "transferencia"
+  if (metodo === "cuentaCorriente") return "cuenta corriente"
+  return metodo || "método desconocido"
+}
+
 // Función para generar número de ticket único para reparaciones
 const generarNumeroTicket = async (puntoVentaId) => {
   const fecha = new Date()
@@ -483,7 +493,7 @@ export const createReparacion = async (req, res) => {
           reparacionId,
           "pago",
           req.user.id,
-          `Pago de ${montoPago.toFixed(2)} con ${pago.metodo}`,
+          `Pago de ${montoPago.toFixed(2)} con ${etiquetaMetodoPagoParaHistorial(pago.metodo)}`,
           connection,
         )
       }
@@ -1087,17 +1097,7 @@ export const registrarPagoReparacion = async (req, res) => {
       id,
       "pago",
       req.user.id,
-      `Pago de ${montoNumerico.toFixed(2)} con ${
-        metodo_pago === "efectivo"
-          ? "efectivo"
-          : metodo_pago === "tarjeta"
-            ? "tarjeta"
-            : metodo_pago === "transferencia"
-              ? "transferencia"
-              : metodo_pago === "cuentaCorriente"
-                ? "cuenta corriente"
-                : "método desconocido"
-      }`,
+      `Pago de ${montoNumerico.toFixed(2)} con ${etiquetaMetodoPagoParaHistorial(metodo_pago)}`,
       connection,
     )
 

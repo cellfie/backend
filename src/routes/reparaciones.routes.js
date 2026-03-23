@@ -55,7 +55,7 @@ const validatePago = [
   check("metodo_pago")
     .notEmpty()
     .withMessage("El método de pago es obligatorio")
-    .isIn(["efectivo", "tarjeta", "transferencia", "cuentaCorriente"])
+    .isIn(["efectivo", "tarjeta", "viumi", "transferencia", "cuentaCorriente"])
     .withMessage("Método de pago no válido"),
 ]
 
