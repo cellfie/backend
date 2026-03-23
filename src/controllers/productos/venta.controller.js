@@ -305,6 +305,15 @@ export const getVentasPaginadas = async (req, res) => {
   }
 }
 
+/** Nombres canónicos del sistema (misma nomenclatura que ventas / getTiposPago). Si aún no hay ventas con ese método, igual aparece en filtros. */
+const METODOS_PAGO_VENTAS_CANONICOS = [
+  "Efectivo",
+  "Transferencia",
+  "Tarjeta de crédito",
+  "ViuMi",
+  "Cuenta corriente",
+]
+
 // NUEVA FUNCIÓN: Obtener métodos de pago únicos para el filtro
 export const getMetodosPagoVentas = async (req, res) => {
   try {
@@ -318,26 +327,31 @@ export const getMetodosPagoVentas = async (req, res) => {
       `SELECT DISTINCT pg.tipo_pago as metodo FROM pagos pg JOIN ventas v ON pg.referencia_id = v.id WHERE pg.tipo_referencia = 'venta' AND pg.anulado = 0 AND v.anulada = 0 AND pg.tipo_pago IS NOT NULL AND pg.tipo_pago != ''`,
     )
 
-    // Combinar y eliminar duplicados
-    const metodosSet = new Set()
+    // Un nombre por clave normalizada (evita duplicar "Cuenta corriente" / "cuenta corriente")
+    const porClave = new Map()
 
-    metodosSimplesResult.forEach((row) => {
-      if (row.metodo) metodosSet.add(row.metodo)
-    })
+    const registrar = (nombre) => {
+      if (!nombre || typeof nombre !== "string") return
+      const t = nombre.trim()
+      if (!t || t === "Múltiple") return
+      const clave = t.toLowerCase().replace(/\s+/g, " ")
+      if (!porClave.has(clave)) porClave.set(clave, t)
+    }
 
-    metodosMultiplesResult.forEach((row) => {
-      if (row.metodo) metodosSet.add(row.metodo)
-    })
+    metodosSimplesResult.forEach((row) => registrar(row.metodo))
+    metodosMultiplesResult.forEach((row) => registrar(row.metodo))
+    METODOS_PAGO_VENTAS_CANONICOS.forEach((c) => registrar(c))
 
-    // Convertir a array y ordenar
-    const metodos = Array.from(metodosSet)
-      .sort()
-      .map((metodo, index) => ({
+    const metodos = Array.from(porClave.values()).sort((a, b) =>
+      a.localeCompare(b, "es", { sensitivity: "base" }),
+    )
+
+    res.json(
+      metodos.map((nombre, index) => ({
         id: index + 1,
-        nombre: metodo,
-      }))
-
-    res.json(metodos)
+        nombre,
+      })),
+    )
   } catch (error) {
     console.error("Error al obtener métodos de pago:", error)
     res.status(500).json({
