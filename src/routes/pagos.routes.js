@@ -19,7 +19,9 @@ const validatePago = [
   check("tipo_pago")
     .isString()
     .withMessage("Tipo de pago inválido"),
-  check("tipo_referencia").isIn(["venta", "cuenta_corriente"]).withMessage("Tipo de referencia inválido"),
+  check("tipo_referencia")
+    .isIn(["venta", "compra", "cuenta_corriente", "devolucion", "ajuste"])
+    .withMessage("Tipo de referencia inválido"),
   check("punto_venta_id").isNumeric().withMessage("ID de punto de venta inválido"),
 ]
 
