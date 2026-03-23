@@ -397,6 +397,14 @@ export const createCompra = async (req, res) => {
         punto_venta_id,
       ])
 
+      // Mantener actualizado el costo del producto con el último costo de compra cargado.
+      // Esto no modifica el precio de venta (columna productos.precio).
+      await connection.query("UPDATE productos SET precio_costo = ?, fecha_actualizacion = ? WHERE id = ?", [
+        costo,
+        fechaActual,
+        item.id,
+      ])
+
       // Registrar movimiento de entrada en log_inventario por compra
       try {
         await connection.query(
