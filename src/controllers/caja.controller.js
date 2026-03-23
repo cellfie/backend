@@ -3,6 +3,27 @@ import { validationResult } from "express-validator"
 import { formatearFechaParaDB, fechaParaAPI } from "../utils/dateUtils.js"
 
 /**
+ * Cargos en cuenta corriente (venta fiada): no ingresan efectivo; no deben sumar en caja.
+ * Tabla `pagos` (ventas de productos).
+ */
+const SQL_EXCL_PAGO_VENTA_SOLO_CC = ` AND NOT (
+  LOWER(TRIM(COALESCE(p.tipo_pago, ''))) IN ('cuenta corriente', 'cuenta')
+  OR LOWER(TRIM(COALESCE(p.tipo_pago, ''))) LIKE '%cuenta corriente%'
+)`
+
+/** Tabla pagos_ventas_equipos */
+const SQL_EXCL_PE_VENTA_SOLO_CC = ` AND NOT (
+  LOWER(TRIM(COALESCE(pe.tipo_pago, ''))) IN ('cuenta corriente', 'cuenta')
+  OR LOWER(TRIM(COALESCE(pe.tipo_pago, ''))) LIKE '%cuenta corriente%'
+)`
+
+/** Tabla pagos_reparacion ? cargo a cuenta (metodo cuentaCorriente) */
+const SQL_EXCL_PR_CARGO_CC = ` AND NOT (
+  LOWER(REPLACE(REPLACE(TRIM(COALESCE(pr.metodo_pago, '')), ' ', ''), '_', '')) = 'cuentacorriente'
+  OR LOWER(TRIM(COALESCE(pr.metodo_pago, ''))) IN ('cuenta corriente', 'cuenta')
+)`
+
+/**
  * Suma los totales de filas tipo { total } (queries agrupadas por tipo_pago).
  */
 function sumarTotalesFilas(rows) {
@@ -26,6 +47,7 @@ async function computeSaldoTeoricoArqueo(sesion) {
      JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
      WHERE (p.caja_sesion_id = ? OR (p.caja_sesion_id IS NULL AND p.punto_venta_id = ? AND p.fecha >= ? AND p.fecha <= COALESCE(?, NOW())))
        AND p.anulado = 0 AND v.anulada = 0
+       ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
      GROUP BY p.tipo_pago`,
     [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
   )
@@ -34,6 +56,7 @@ async function computeSaldoTeoricoArqueo(sesion) {
      FROM pagos_ventas_equipos pe
      JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
      WHERE pe.caja_sesion_id = ? AND pe.anulado = 0 AND ve.anulada = 0
+       ${SQL_EXCL_PE_VENTA_SOLO_CC}
      GROUP BY pe.tipo_pago`,
     [id],
   )
@@ -42,8 +65,21 @@ async function computeSaldoTeoricoArqueo(sesion) {
      FROM pagos_reparacion pr
      JOIN reparaciones r ON pr.reparacion_id = r.id
      WHERE pr.caja_sesion_id = ?
+       ${SQL_EXCL_PR_CARGO_CC}
      GROUP BY pr.metodo_pago`,
     [id],
+  )
+  const [totalesPagosClienteCc] = await pool.query(
+    `SELECT p.tipo_pago, SUM(p.monto) AS total
+     FROM pagos p
+     WHERE p.tipo_referencia = 'cuenta_corriente'
+       AND p.anulado = 0
+       AND (
+         p.caja_sesion_id = ?
+         OR (p.caja_sesion_id IS NULL AND p.punto_venta_id = ? AND p.fecha >= ? AND p.fecha <= COALESCE(?, NOW()))
+       )
+     GROUP BY p.tipo_pago`,
+    [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
   )
 
   const [movimientosPorOrigenRows] = await pool.query(
@@ -65,6 +101,7 @@ async function computeSaldoTeoricoArqueo(sesion) {
     sumarTotalesFilas(totalesVentasProductos) +
     sumarTotalesFilas(totalesVentasEquipos) +
     sumarTotalesFilas(totalesReparaciones) +
+    sumarTotalesFilas(totalesPagosClienteCc) +
     ingGeneral -
     egrGeneral
   )
@@ -176,6 +213,7 @@ export const getCajaActual = async (req, res) => {
         )
           AND p.anulado = 0
           AND v.anulada = 0
+          ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
         GROUP BY p.tipo_pago`,
       [sesion.id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
@@ -190,6 +228,7 @@ export const getCajaActual = async (req, res) => {
         WHERE pe.caja_sesion_id = ?
           AND pe.anulado = 0
           AND ve.anulada = 0
+          ${SQL_EXCL_PE_VENTA_SOLO_CC}
         GROUP BY pe.tipo_pago`,
       [sesion.id],
     )
@@ -217,11 +256,31 @@ export const getCajaActual = async (req, res) => {
         FROM pagos_reparacion pr
         JOIN reparaciones r ON pr.reparacion_id = r.id
         WHERE pr.caja_sesion_id = ?
+          ${SQL_EXCL_PR_CARGO_CC}
         GROUP BY pr.metodo_pago`,
       [sesion.id],
     )
 
-    // Nota: para ventas de equipos tu sistema usa pagos_ventas_equipos; se pueden sumar m?s adelante
+    // Abonos de cuenta corriente (ingresan en caja)
+    const [totalesPagosCuentaCorriente] = await pool.query(
+      `SELECT 
+          p.tipo_pago,
+          SUM(p.monto) AS total
+        FROM pagos p
+        WHERE (
+          p.caja_sesion_id = ?
+          OR (
+            p.caja_sesion_id IS NULL
+            AND p.punto_venta_id = ?
+            AND p.fecha >= ?
+            AND p.fecha <= COALESCE(?, NOW())
+          )
+        )
+          AND p.tipo_referencia = 'cuenta_corriente'
+          AND p.anulado = 0
+        GROUP BY p.tipo_pago`,
+      [sesion.id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+    )
 
     const sesionNormalizada = sesion
       ? {
@@ -240,6 +299,7 @@ export const getCajaActual = async (req, res) => {
         ventas_equipos: totalesVentasEquipos,
         compras: totalesCompras,
         reparaciones: totalesReparaciones,
+        pagos_cuenta_corriente: totalesPagosCuentaCorriente,
       },
     })
   } catch (error) {
@@ -306,6 +366,7 @@ export const getSesionCajaPorId = async (req, res) => {
        JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
        WHERE (p.caja_sesion_id = ? OR (p.caja_sesion_id IS NULL AND p.punto_venta_id = ? AND p.fecha >= ? AND p.fecha <= COALESCE(?, NOW())))
          AND p.anulado = 0 AND v.anulada = 0
+         ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
        GROUP BY p.tipo_pago`,
       [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
@@ -314,6 +375,7 @@ export const getSesionCajaPorId = async (req, res) => {
        FROM pagos_ventas_equipos pe
        JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
        WHERE pe.caja_sesion_id = ? AND pe.anulado = 0 AND ve.anulada = 0
+         ${SQL_EXCL_PE_VENTA_SOLO_CC}
        GROUP BY pe.tipo_pago`,
       [id],
     )
@@ -322,8 +384,21 @@ export const getSesionCajaPorId = async (req, res) => {
        FROM pagos_reparacion pr
        JOIN reparaciones r ON pr.reparacion_id = r.id
        WHERE pr.caja_sesion_id = ?
+         ${SQL_EXCL_PR_CARGO_CC}
        GROUP BY pr.metodo_pago`,
       [id],
+    )
+    const [totalesPagosCuentaCorriente] = await pool.query(
+      `SELECT p.tipo_pago, SUM(p.monto) AS total
+       FROM pagos p
+       WHERE (
+         p.caja_sesion_id = ?
+         OR (p.caja_sesion_id IS NULL AND p.punto_venta_id = ? AND p.fecha >= ? AND p.fecha <= COALESCE(?, NOW()))
+       )
+         AND p.tipo_referencia = 'cuenta_corriente'
+         AND p.anulado = 0
+       GROUP BY p.tipo_pago`,
+      [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
     const sesionNormalizada = {
@@ -340,6 +415,7 @@ export const getSesionCajaPorId = async (req, res) => {
         ventas_productos: totalesVentasProductos,
         ventas_equipos: totalesVentasEquipos,
         reparaciones: totalesReparaciones,
+        pagos_cuenta_corriente: totalesPagosCuentaCorriente,
       },
     })
   } catch (error) {
@@ -793,6 +869,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
            )
          )
            AND p.anulado = 0 AND v.anulada = 0
+           ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
          ORDER BY p.fecha DESC`,
         [caja_sesion_id, punto_venta_id, fechaDesde, fechaHasta],
       )
@@ -825,6 +902,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          LEFT JOIN usuarios u ON pe.usuario_id = u.id
          WHERE pe.caja_sesion_id = ?
            AND pe.anulado = 0 AND ve.anulada = 0
+           ${SQL_EXCL_PE_VENTA_SOLO_CC}
          ORDER BY pe.fecha_pago DESC`,
         [caja_sesion_id],
       )
@@ -856,6 +934,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          JOIN reparaciones r ON pr.reparacion_id = r.id
          LEFT JOIN usuarios u ON pr.usuario_id = u.id
          WHERE pr.caja_sesion_id = ?
+           ${SQL_EXCL_PR_CARGO_CC}
          ORDER BY pr.fecha_pago DESC`,
         [caja_sesion_id],
       )
@@ -881,18 +960,55 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         ),
       )
     } else {
-      // general: todos los movimientos de la sesi?n (ventas productos + ventas equipos + reparaciones + manuales)
+      // general: todos los movimientos de la sesi?n (ventas productos + ventas equipos + reparaciones + abonos CC + manuales)
       const [pagosVenta] = await pool.query(
         `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, v.numero_factura
          FROM pagos p
          JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
          JOIN usuarios u ON p.usuario_id = u.id
-         WHERE p.caja_sesion_id = ? AND p.anulado = 0 AND v.anulada = 0
+         WHERE (
+           p.caja_sesion_id = ?
+           OR (
+             p.caja_sesion_id IS NULL
+             AND p.punto_venta_id = ?
+             AND p.fecha >= ? AND p.fecha <= ?
+           )
+         )
+           AND p.anulado = 0 AND v.anulada = 0
+           ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
          ORDER BY p.fecha DESC`,
-        [caja_sesion_id],
+        [caja_sesion_id, punto_venta_id, fechaDesde, fechaHasta],
       )
       pagosVenta.forEach((row) =>
         todos.push(normalizeRow(row, "venta", `Venta ${row.numero_factura || row.referencia_id}`)),
+      )
+
+      const [pagosAbonoCcGen] = await pool.query(
+        `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre
+         FROM pagos p
+         JOIN usuarios u ON p.usuario_id = u.id
+         LEFT JOIN clientes c ON p.cliente_id = c.id
+         WHERE p.tipo_referencia = 'cuenta_corriente'
+           AND p.anulado = 0
+           AND (
+             p.caja_sesion_id = ?
+             OR (
+               p.caja_sesion_id IS NULL
+               AND p.punto_venta_id = ?
+               AND p.fecha >= ? AND p.fecha <= ?
+             )
+           )
+         ORDER BY p.fecha DESC`,
+        [caja_sesion_id, punto_venta_id, fechaDesde, fechaHasta],
+      )
+      pagosAbonoCcGen.forEach((row) =>
+        todos.push(
+          normalizeRow(
+            row,
+            "venta",
+            `Abono cuenta corriente - ${row.cliente_nombre || "Cliente"}`,
+          ),
+        ),
       )
 
       const [pagosEquipos] = await pool.query(
@@ -901,6 +1017,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          JOIN ventas_equipos ve ON pe.venta_equipo_id = ve.id
          LEFT JOIN usuarios u ON pe.usuario_id = u.id
          WHERE pe.caja_sesion_id = ? AND pe.anulado = 0 AND ve.anulada = 0
+           ${SQL_EXCL_PE_VENTA_SOLO_CC}
          ORDER BY pe.fecha_pago DESC`,
         [caja_sesion_id],
       )
@@ -914,6 +1031,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
          JOIN reparaciones r ON pr.reparacion_id = r.id
          LEFT JOIN usuarios u ON pr.usuario_id = u.id
          WHERE pr.caja_sesion_id = ?
+           ${SQL_EXCL_PR_CARGO_CC}
          ORDER BY pr.fecha_pago DESC`,
         [caja_sesion_id],
       )

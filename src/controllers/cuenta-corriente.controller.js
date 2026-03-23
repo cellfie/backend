@@ -1,5 +1,6 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
+import { tieneCajaAbierta } from "./caja.controller.js"
 
 // Obtener todas las cuentas corrientes
 export const getCuentasCorrientes = async (req, res) => {
@@ -172,10 +173,29 @@ export const registrarPago = async (req, res) => {
   // Obtener el ID del usuario desde el token JWT
   const usuario_id = req.user.id
 
+  const pvId = punto_venta_id || 1
+  if (!(await tieneCajaAbierta(pvId))) {
+    return res.status(403).json({
+      message: "La caja debe estar abierta para registrar pagos de cuenta corriente. Abra la caja desde el módulo Caja.",
+    })
+  }
+
   const connection = await pool.getConnection()
 
   try {
     await connection.beginTransaction()
+
+    const [sesionesCaja] = await connection.query(
+      "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
+      [pvId],
+    )
+    const cajaSesionId = sesionesCaja.length > 0 ? sesionesCaja[0].id : null
+    if (!cajaSesionId) {
+      await connection.rollback()
+      return res.status(403).json({
+        message: "La caja debe estar abierta para registrar pagos de cuenta corriente. Abra la caja desde el módulo Caja.",
+      })
+    }
 
     // Verificar si el cliente existe
     const [clientes] = await connection.query("SELECT * FROM clientes WHERE id = ?", [cliente_id])
@@ -212,7 +232,7 @@ export const registrarPago = async (req, res) => {
     // CORREGIDO: Calcular nuevo saldo - el pago REDUCE la deuda
     const nuevoSaldo = saldoActual - montoNumerico
 
-    // Registrar el pago
+    // Registrar el pago (abono: ingresa a caja; debe ir ligado a la sesión abierta)
     const [resultPago] = await connection.query(
       `INSERT INTO pagos (
         monto, 
@@ -223,16 +243,18 @@ export const registrarPago = async (req, res) => {
         cliente_id, 
         usuario_id, 
         punto_venta_id, 
-        notas
-      ) VALUES (?, NOW(), ?, 'cuenta_corriente', ?, ?, ?, ?, ?)`,
+        notas,
+        caja_sesion_id
+      ) VALUES (?, NOW(), ?, 'cuenta_corriente', ?, ?, ?, ?, ?, ?)`,
       [
         montoNumerico,
         cuentaCorriente.id,
         tipo_pago || "Efectivo",
         cliente_id,
         usuario_id,
-        punto_venta_id || 1,
+        pvId,
         notas || `Pago en cuenta corriente. Saldo anterior: ${saldoActual.toFixed(2)}`,
+        cajaSesionId,
       ],
     )
 

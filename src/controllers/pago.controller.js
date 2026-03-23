@@ -1,6 +1,13 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
 
+/** Venta fiada (cargo a cuenta): no debe ligarse a sesión de caja. */
+function esCargoVentaCuentaCorriente(tipo_pago, tipo_referencia) {
+  if (tipo_referencia !== "venta") return false
+  const t = (tipo_pago || "").toLowerCase()
+  return t.includes("cuenta") || t === "cuenta"
+}
+
 // Obtener todos los pagos
 export const getPagos = async (req, res) => {
   try {
@@ -221,9 +228,9 @@ export const registrarPagoInterno = async (
     )
   }
 
-  // Para ventas: obtener sesión de caja abierta y guardar caja_sesion_id (para movimientos por sesión)
+  // Ventas con efectivo/transferencia/etc.: ligar a caja. Ventas solo en cuenta corriente (cargo): sin caja.
   let caja_sesion_id = null
-  if (tipo_referencia === "venta") {
+  if (tipo_referencia === "venta" && !esCargoVentaCuentaCorriente(tipo_pago, tipo_referencia)) {
     const [sesiones] = await connection.query(
       `SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`,
       [punto_venta_id],
@@ -336,8 +343,14 @@ export const anularPago = async (req, res) => {
       return res.status(400).json({ message: "El pago ya está anulado" })
     }
 
-    // Si es un pago de cuenta corriente, revertir el movimiento
-    if (pago.tipo_pago && pago.tipo_pago.toLowerCase().includes("cuenta") && pago.cliente_id) {
+    // Movimientos que afectan saldo de cuenta corriente (cargo venta CC, abono cuenta_corriente, o legado por tipo_pago)
+    const afectaCuentaCorriente =
+      pago.cliente_id &&
+      (pago.tipo_referencia === "cuenta_corriente" ||
+        (pago.tipo_referencia === "venta" && esCargoVentaCuentaCorriente(pago.tipo_pago, pago.tipo_referencia)) ||
+        (pago.tipo_pago && pago.tipo_pago.toLowerCase().includes("cuenta")))
+
+    if (afectaCuentaCorriente) {
       // Obtener la cuenta corriente del cliente
       const [cuentasCorrientes] = await connection.query(
         "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
@@ -353,12 +366,16 @@ export const anularPago = async (req, res) => {
         let nuevoSaldo
         let tipoMovimiento
 
-        if (pago.tipo_referencia === "venta") {
-          // Era una venta en cuenta corriente - REVERTIR: disminuir la deuda
+        if (pago.tipo_referencia === "venta" && esCargoVentaCuentaCorriente(pago.tipo_pago, pago.tipo_referencia)) {
+          // Era una venta en cuenta corriente (cargo) - REVERTIR: disminuir la deuda
           nuevoSaldo = saldoActual - montoNumerico
           tipoMovimiento = "pago"
+        } else if (pago.tipo_referencia === "cuenta_corriente") {
+          // Era un abono de cuenta corriente (ingreso en caja) - REVERTIR: aumentar la deuda
+          nuevoSaldo = saldoActual + montoNumerico
+          tipoMovimiento = "cargo"
         } else {
-          // Era un pago directo - REVERTIR: aumentar la deuda
+          // Legado u otro: pago que bajaba deuda - REVERTIR: aumentar la deuda
           nuevoSaldo = saldoActual + montoNumerico
           tipoMovimiento = "cargo"
         }

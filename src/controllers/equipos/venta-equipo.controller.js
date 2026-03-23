@@ -252,11 +252,14 @@ export const createVentaEquipo = async (req, res) => {
     }
 
     const { tieneCajaAbierta } = await import("../caja.controller.js")
-    const cajaAbierta = await tieneCajaAbierta(punto_venta_id)
-    if (!cajaAbierta) {
+    const requiereCajaAbierta = pagos.some((p) => {
+      const t = (p.tipo_pago || "").toLowerCase()
+      return t !== "cuenta corriente" && t !== "cuenta"
+    })
+    if (requiereCajaAbierta && !(await tieneCajaAbierta(punto_venta_id))) {
       await connection.rollback()
       return res.status(403).json({
-        message: "La caja debe estar abierta para registrar ventas de equipos. Abra la caja desde el módulo Caja.",
+        message: "La caja debe estar abierta para registrar ventas de equipos con métodos que ingresan dinero. Abra la caja desde el módulo Caja.",
       })
     }
 
@@ -503,9 +506,28 @@ export const createVentaEquipo = async (req, res) => {
             `Cargo por venta de equipo #${numeroFactura}`,
           ],
         )
+
+        // Cargo a cuenta: no ingresa efectivo en caja
+        await connection.query(
+          `INSERT INTO pagos_ventas_equipos (
+                    venta_equipo_id, monto_usd, monto_ars, tipo_pago, fecha_pago,
+                    usuario_id, punto_venta_id, caja_sesion_id, notas
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+          [
+            ventaId,
+            montoPagoUSD,
+            montoPagoARS,
+            pago.tipo_pago,
+            fechaActual,
+            usuario_id,
+            punto_venta_id,
+            notas || `Cargo cuenta corriente venta equipo #${numeroFactura}`,
+          ],
+        )
+        continue
       }
 
-      // Obtener sesión de caja abierta para asociar el pago
+      // Obtener sesión de caja abierta para asociar el pago (solo métodos que ingresan dinero)
       const [sesionesCaja] = await connection.query(
         "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
         [punto_venta_id],

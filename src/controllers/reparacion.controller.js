@@ -312,18 +312,8 @@ export const createReparacion = async (req, res) => {
 
     const reparacionId = resultReparacion.insertId
 
-    // Obtener sesión de caja abierta para este punto de venta (para asociar pagos de reparación)
-    const [sesionesCaja] = await connection.query(
-      "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
-      [punto_venta_id],
-    )
-    if (sesionesCaja.length === 0) {
-      await connection.rollback()
-      return res.status(403).json({
-        message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
-      })
-    }
-    const cajaSesionId = sesionesCaja[0].id
+    // Caja solo si hay pago que ingresa dinero (no cargo a cuenta corriente)
+    let cajaSesionId = null
 
     // Registrar la acción de creación en el historial
     await registrarAccion(reparacionId, "creacion", req.user.id, "Reparación registrada en el sistema", connection)
@@ -377,7 +367,23 @@ export const createReparacion = async (req, res) => {
         })
       }
 
-      // Si es cuenta corriente
+      if (pago.metodo !== "cuentaCorriente") {
+        const [sesionesCaja] = await connection.query(
+          "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
+          [punto_venta_id],
+        )
+        if (sesionesCaja.length === 0) {
+          await connection.rollback()
+          return res.status(403).json({
+            message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
+          })
+        }
+        cajaSesionId = sesionesCaja[0].id
+      } else {
+        cajaSesionId = null
+      }
+
+      // Si es cuenta corriente (cargo a cuenta: no ingresa efectivo en caja)
       if (pago.metodo === "cuentaCorriente") {
         // Verificar si el cliente tiene cuenta corriente
         const [cuentasCorrientes] = await connection.query(
@@ -939,27 +945,6 @@ export const registrarPagoReparacion = async (req, res) => {
     }
 
     const reparacion = reparaciones[0]
-    const { tieneCajaAbierta } = await import("./caja.controller.js")
-    const cajaAbierta = await tieneCajaAbierta(reparacion.punto_venta_id)
-    if (!cajaAbierta) {
-      await connection.rollback()
-      return res.status(403).json({
-        message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
-      })
-    }
-
-    // Obtener sesión de caja abierta para asociar los pagos de reparación
-    const [sesionesCaja] = await connection.query(
-      "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
-      [reparacion.punto_venta_id],
-    )
-    if (sesionesCaja.length === 0) {
-      await connection.rollback()
-      return res.status(403).json({
-        message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
-      })
-    }
-    const cajaSesionId = sesionesCaja[0].id
 
     const totalReparacion = Number.parseFloat(reparacion.total) || 0
     const totalPagadoRep = Number.parseFloat(reparacion.total_pagado) || 0
@@ -976,7 +961,30 @@ export const registrarPagoReparacion = async (req, res) => {
 
     let referenciaCuentaCorriente = null
 
-    // Si el método de pago es cuenta corriente, actualizar el saldo
+    let cajaSesionId = null
+    if (metodo_pago !== "cuentaCorriente") {
+      const { tieneCajaAbierta } = await import("./caja.controller.js")
+      const cajaAbierta = await tieneCajaAbierta(reparacion.punto_venta_id)
+      if (!cajaAbierta) {
+        await connection.rollback()
+        return res.status(403).json({
+          message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
+        })
+      }
+      const [sesionesCaja] = await connection.query(
+        "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
+        [reparacion.punto_venta_id],
+      )
+      if (sesionesCaja.length === 0) {
+        await connection.rollback()
+        return res.status(403).json({
+          message: "La caja debe estar abierta para registrar pagos de reparación. Abra la caja desde el módulo Caja.",
+        })
+      }
+      cajaSesionId = sesionesCaja[0].id
+    }
+
+    // Si el método de pago es cuenta corriente (cargo), actualizar el saldo
     if (metodo_pago === "cuentaCorriente") {
       if (!reparacion.cliente_id) {
         await connection.rollback()

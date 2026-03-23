@@ -645,11 +645,15 @@ export const createVenta = async (req, res) => {
     }
 
     const { tieneCajaAbierta } = await import("../caja.controller.js")
-    const cajaAbierta = await tieneCajaAbierta(punto_venta_id)
-    if (!cajaAbierta) {
+    const requiereCajaAbierta = pagos.some((p) => {
+      const t = (p.tipo_pago || "").toLowerCase()
+      return !(t.includes("cuenta") || t === "cuenta")
+    })
+    if (requiereCajaAbierta && !(await tieneCajaAbierta(punto_venta_id))) {
       await connection.rollback()
       return res.status(403).json({
-        message: "La caja debe estar abierta para registrar ventas. Abra la caja desde el módulo Caja.",
+        message:
+          "La caja debe estar abierta para registrar ventas con métodos que ingresan dinero. Abra la caja desde el módulo Caja.",
       })
     }
 
