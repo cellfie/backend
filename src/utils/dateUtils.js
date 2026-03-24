@@ -31,31 +31,25 @@ export const formatearFechaParaDB = (fecha = null) => {
 /**
  * Convierte una fecha (Date o string MySQL) a ISO con offset Argentina (-03:00)
  * para que el frontend muestre la hora correcta sin desfase.
- * - Si es Date: el driver MySQL con timezone 'Z' devuelve en UTC (ej. ventas con NOW()).
- *   Convertimos a hora Argentina y devolvemos YYYY-MM-DDTHH:mm:ss-03:00.
- * - Si es string "YYYY-MM-DD HH:mm:ss" (sin TZ): se asume ya en Argentina y se devuelve con -03:00.
+ *
+ * Con mysql2 y `timezone: 'Z'` en el pool, las columnas DATETIME (sin TZ en MySQL)
+ * se leen como Date cuyos componentes UTC coinciden con el calendario guardado
+ * (ej. fila 09:58 → getUTCHours() === 9). Si aquí se formateara ese Date en zona
+ * Argentina, se restarían 3 h respecto de lo guardado. Por eso, para Date usamos
+ * getUTC* y etiquetamos como -03:00 (hora de negocio Argentina = dígitos de la BD).
+ *
+ * Si es string "YYYY-MM-DD HH:mm:ss" (sin TZ): se asume ya en Argentina y se devuelve con -03:00.
  */
 export const fechaParaAPI = (value) => {
   if (value == null) return value
   if (value instanceof Date) {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Argentina/Buenos_Aires",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    })
-    const partes = formatter.formatToParts(value)
-    const get = (type) => partes.find((p) => p.type === type)?.value || "00"
-    const y = get("year")
-    const m = get("month")
-    const d = get("day")
-    const h = get("hour")
-    const min = get("minute")
-    const s = get("second")
+    if (Number.isNaN(value.getTime())) return value
+    const y = value.getUTCFullYear()
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0")
+    const d = String(value.getUTCDate()).padStart(2, "0")
+    const h = String(value.getUTCHours()).padStart(2, "0")
+    const min = String(value.getUTCMinutes()).padStart(2, "0")
+    const s = String(value.getUTCSeconds()).padStart(2, "0")
     return `${y}-${m}-${d}T${h}:${min}:${s}-03:00`
   }
   if (typeof value === "string") {
