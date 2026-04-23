@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS detalle_compras (
   producto_id INT UNSIGNED NOT NULL,
   cantidad INT UNSIGNED NOT NULL DEFAULT 0,
   costo_unitario DECIMAL(10,2) NOT NULL DEFAULT 0,
+  precio_venta_unitario DECIMAL(10,2) NULL DEFAULT NULL,
   subtotal DECIMAL(10,2) NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   KEY idx_detalle_compras_compra (compra_id),

@@ -31,6 +31,12 @@ const validateCompra = [
     .withMessage("El costo unitario debe ser un número")
     .custom((value) => value >= 0)
     .withMessage("El costo unitario no puede ser negativo"),
+  check("productos.*.precio_venta")
+    .optional()
+    .isNumeric()
+    .withMessage("El precio de venta debe ser un número")
+    .custom((value) => value >= 0)
+    .withMessage("El precio de venta no puede ser negativo"),
   check("pagos")
     .optional()
     .isArray()

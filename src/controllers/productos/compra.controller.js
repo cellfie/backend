@@ -228,6 +228,7 @@ export const getCompraById = async (req, res) => {
           p.nombre AS producto_nombre,
           dc.cantidad,
           dc.costo_unitario,
+          dc.precio_venta_unitario,
           dc.subtotal
         FROM detalle_compras dc
         JOIN productos p ON dc.producto_id = p.id
@@ -320,12 +321,20 @@ export const createCompra = async (req, res) => {
 
       const cantidad = Number(item.cantidad)
       const costo = Number(item.costo_unitario ?? item.costo ?? item.precio ?? 0)
+      const precioVenta = Number(item.precio_venta ?? item.precio ?? productosDb[0].precio ?? 0)
 
-      if (Number.isNaN(cantidad) || cantidad <= 0 || Number.isNaN(costo) || costo < 0) {
+      if (
+        Number.isNaN(cantidad) ||
+        cantidad <= 0 ||
+        Number.isNaN(costo) ||
+        costo < 0 ||
+        Number.isNaN(precioVenta) ||
+        precioVenta < 0
+      ) {
         await connection.rollback()
-        return res
-          .status(400)
-          .json({ message: `Cantidad o costo inválido para el producto ${productosDb[0].nombre}` })
+        return res.status(400).json({
+          message: `Cantidad, costo o precio de venta inválido para el producto ${productosDb[0].nombre}`,
+        })
       }
 
       detalleProductos.push({
@@ -382,13 +391,15 @@ export const createCompra = async (req, res) => {
     const compraId = resultCompra.insertId
 
     for (const item of productos) {
+      const [productosDb] = await connection.query("SELECT precio FROM productos WHERE id = ?", [item.id])
       const cantidad = Number(item.cantidad)
       const costo = Number(item.costo_unitario ?? item.costo ?? item.precio ?? 0)
+      const precioVenta = Number(item.precio_venta ?? item.precio ?? productosDb[0]?.precio ?? 0)
 
       await connection.query(
-        `INSERT INTO detalle_compras (compra_id, producto_id, cantidad, costo_unitario, subtotal)
-         VALUES (?, ?, ?, ?, ?)`,
-        [compraId, item.id, cantidad, costo, costo * cantidad],
+        `INSERT INTO detalle_compras (compra_id, producto_id, cantidad, costo_unitario, precio_venta_unitario, subtotal)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [compraId, item.id, cantidad, costo, precioVenta, costo * cantidad],
       )
 
       await connection.query("UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?", [
@@ -397,10 +408,10 @@ export const createCompra = async (req, res) => {
         punto_venta_id,
       ])
 
-      // Mantener actualizado el costo del producto con el último costo de compra cargado.
-      // Esto no modifica el precio de venta (columna productos.precio).
-      await connection.query("UPDATE productos SET precio_costo = ?, fecha_actualizacion = ? WHERE id = ?", [
+      // Mantener actualizado costo y precio de venta con los valores cargados en la compra.
+      await connection.query("UPDATE productos SET precio_costo = ?, precio = ?, fecha_actualizacion = ? WHERE id = ?", [
         costo,
+        precioVenta,
         fechaActual,
         item.id,
       ])
