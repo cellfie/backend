@@ -8,6 +8,65 @@ function esCargoVentaCuentaCorriente(tipo_pago, tipo_referencia) {
   return t.includes("cuenta") || t === "cuenta"
 }
 
+function esCuentaCorrienteProveedor(tipo_pago, tipo_referencia) {
+  if (tipo_referencia !== "compra") return false
+  const t = (tipo_pago || "").toLowerCase().trim()
+  return t.includes("cuenta corriente proveedor")
+}
+
+const normalizarMonto = (monto) => {
+  const valor = Number(monto)
+  return Number.isFinite(valor) ? valor : 0
+}
+
+const asegurarCuentaCorrienteProveedor = async (connection, proveedorId) => {
+  const [cuentas] = await connection.query(
+    "SELECT * FROM cuentas_corrientes_proveedores WHERE proveedor_id = ? LIMIT 1",
+    [proveedorId],
+  )
+  if (cuentas.length > 0) return cuentas[0]
+
+  const [result] = await connection.query(
+    `INSERT INTO cuentas_corrientes_proveedores (proveedor_id, saldo, fecha_ultimo_movimiento)
+     VALUES (?, 0, NOW())`,
+    [proveedorId],
+  )
+  const [creada] = await connection.query("SELECT * FROM cuentas_corrientes_proveedores WHERE id = ?", [result.insertId])
+  return creada[0]
+}
+
+const registrarMovimientoCuentaCorrienteProveedor = async (
+  connection,
+  { proveedor_id, compra_id, pago_id = null, monto, tipo, usuario_id, notas },
+) => {
+  const cuenta = await asegurarCuentaCorrienteProveedor(connection, proveedor_id)
+  const saldoAnterior = normalizarMonto(cuenta.saldo)
+  const montoNumerico = normalizarMonto(monto)
+  const saldoNuevo = tipo === "cargo" ? saldoAnterior + montoNumerico : saldoAnterior - montoNumerico
+
+  await connection.query("UPDATE cuentas_corrientes_proveedores SET saldo = ?, fecha_ultimo_movimiento = NOW() WHERE id = ?", [
+    saldoNuevo,
+    cuenta.id,
+  ])
+
+  await connection.query(
+    `INSERT INTO movimientos_cuenta_corriente_proveedor (
+      cuenta_corriente_proveedor_id,
+      proveedor_id,
+      compra_id,
+      pago_id,
+      tipo,
+      monto,
+      saldo_anterior,
+      saldo_nuevo,
+      usuario_id,
+      notas,
+      fecha
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [cuenta.id, proveedor_id, compra_id || null, pago_id, tipo, montoNumerico, saldoAnterior, saldoNuevo, usuario_id, notas || null],
+  )
+}
+
 // Obtener todos los pagos
 export const getPagos = async (req, res) => {
   try {
@@ -143,6 +202,7 @@ export const registrarPagoInterno = async (
     punto_venta_id,
     notas,
     detalle_productos,
+    es_pago_inicial_compra = false,
   },
 ) => {
   // Verificar que el punto de venta existe
@@ -258,6 +318,40 @@ export const registrarPagoInterno = async (
       caja_sesion_id,
     ],
   )
+
+  // Compras con cuenta corriente proveedor: generar deuda.
+  // Pagos posteriores de compras (no iniciales): descontar deuda.
+  if (tipo_referencia === "compra" && referencia_id) {
+    const [compras] = await connection.query("SELECT id, proveedor_id, numero_comprobante FROM compras WHERE id = ? LIMIT 1", [
+      referencia_id,
+    ])
+    if (compras.length > 0) {
+      const compra = compras[0]
+      const montoNumerico = normalizarMonto(monto)
+
+      if (esCuentaCorrienteProveedor(tipo_pago, tipo_referencia) && es_pago_inicial_compra) {
+        await registrarMovimientoCuentaCorrienteProveedor(connection, {
+          proveedor_id: compra.proveedor_id,
+          compra_id: compra.id,
+          pago_id: resultPago.insertId,
+          monto: montoNumerico,
+          tipo: "cargo",
+          usuario_id,
+          notas: notas || `Compra #${compra.numero_comprobante} cargada a cuenta corriente del proveedor`,
+        })
+      } else if (!es_pago_inicial_compra) {
+        await registrarMovimientoCuentaCorrienteProveedor(connection, {
+          proveedor_id: compra.proveedor_id,
+          compra_id: compra.id,
+          pago_id: resultPago.insertId,
+          monto: montoNumerico,
+          tipo: "pago",
+          usuario_id,
+          notas: notas || `Pago aplicado a compra #${compra.numero_comprobante}`,
+        })
+      }
+    }
+  }
 
   return {
     id: resultPago.insertId,

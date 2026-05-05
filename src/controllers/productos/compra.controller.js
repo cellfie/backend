@@ -456,6 +456,7 @@ export const createCompra = async (req, res) => {
           punto_venta_id,
           notas: notas || `Pago de compra #${numeroComprobante}`,
           detalle_productos: detalleProductos,
+          es_pago_inicial_compra: true,
         })
       }
     }
@@ -555,6 +556,64 @@ export const anularCompra = async (req, res) => {
 
     for (const pago of pagosAsociados) {
       if (pago.anulado) continue
+
+      // Revertir movimientos en cuenta corriente proveedor vinculados a este pago.
+      try {
+        const tipoPagoNormalizado = String(pago.tipo_pago || "").toLowerCase()
+        const esCuentaCorrienteProveedor = tipoPagoNormalizado.includes("cuenta corriente proveedor")
+        const [compraProveedor] = await connection.query("SELECT proveedor_id FROM compras WHERE id = ? LIMIT 1", [id])
+        const proveedorId = compraProveedor[0]?.proveedor_id
+
+        if (proveedorId) {
+          const [cuentas] = await connection.query(
+            "SELECT id, saldo FROM cuentas_corrientes_proveedores WHERE proveedor_id = ? LIMIT 1",
+            [proveedorId],
+          )
+          if (cuentas.length > 0) {
+            const cuenta = cuentas[0]
+            const montoPago = Number(pago.monto) || 0
+            const saldoAnterior = Number(cuenta.saldo) || 0
+            const tipoReversion = esCuentaCorrienteProveedor ? "pago" : "cargo"
+            const saldoNuevo = tipoReversion === "cargo" ? saldoAnterior + montoPago : saldoAnterior - montoPago
+
+            await connection.query(
+              "UPDATE cuentas_corrientes_proveedores SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?",
+              [saldoNuevo, fechaActual, cuenta.id],
+            )
+
+            await connection.query(
+              `INSERT INTO movimientos_cuenta_corriente_proveedor (
+                cuenta_corriente_proveedor_id,
+                proveedor_id,
+                compra_id,
+                pago_id,
+                tipo,
+                monto,
+                saldo_anterior,
+                saldo_nuevo,
+                usuario_id,
+                notas,
+                fecha
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                cuenta.id,
+                proveedorId,
+                compra.id,
+                pago.id,
+                tipoReversion,
+                montoPago,
+                saldoAnterior,
+                saldoNuevo,
+                usuario_id,
+                `Reversión por anulación de compra #${compra.numero_comprobante}`,
+                fechaActual,
+              ],
+            )
+          }
+        }
+      } catch (ccProvError) {
+        console.warn("No se pudo revertir cuenta corriente proveedor al anular compra:", ccProvError)
+      }
 
       await connection.query("UPDATE pagos SET anulado = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?", [
         fechaActual,
