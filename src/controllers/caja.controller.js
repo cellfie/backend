@@ -708,7 +708,7 @@ export const getSesionesCaja = async (req, res) => {
       JOIN puntos_venta pv ON cs.punto_venta_id = pv.id
       LEFT JOIN usuarios uc ON cs.usuario_cierre_id = uc.id
       ${where}
-      ORDER BY cs.fecha_apertura DESC
+      ORDER BY cs.fecha_apertura DESC, cs.id DESC
       LIMIT ? OFFSET ?
     `
 
