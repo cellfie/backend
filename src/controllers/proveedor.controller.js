@@ -1,5 +1,6 @@
 import pool from "../db.js"
 import { validationResult } from "express-validator"
+import { registrarPagoInterno } from "./pago.controller.js"
 
 // Obtener todos los proveedores
 export const getProveedores = async (req, res) => {
@@ -182,6 +183,7 @@ export const deleteProveedor = async (req, res) => {
 export const getCuentaCorrienteProveedor = async (req, res) => {
   try {
     const { id } = req.params
+    const { fecha_inicio, fecha_fin } = req.query
     const proveedorId = Number(id)
     if (!proveedorId || Number.isNaN(proveedorId)) {
       return res.status(400).json({ message: "ID de proveedor inválido" })
@@ -204,6 +206,17 @@ export const getCuentaCorrienteProveedor = async (req, res) => {
       fecha_creacion: null,
     }
 
+    let whereMov = "WHERE proveedor_id = ?"
+    const movParams = [proveedorId]
+    if (fecha_inicio) {
+      whereMov += " AND DATE(fecha) >= ?"
+      movParams.push(fecha_inicio)
+    }
+    if (fecha_fin) {
+      whereMov += " AND DATE(fecha) <= ?"
+      movParams.push(fecha_fin)
+    }
+
     const [movimientos] = await pool.query(
       `SELECT
         id,
@@ -217,10 +230,10 @@ export const getCuentaCorrienteProveedor = async (req, res) => {
         fecha,
         usuario_id
       FROM movimientos_cuenta_corriente_proveedor
-      WHERE proveedor_id = ?
+      ${whereMov}
       ORDER BY fecha DESC, id DESC
       LIMIT 200`,
-      [proveedorId],
+      movParams,
     )
 
     res.json({
@@ -237,7 +250,7 @@ export const getCuentaCorrienteProveedor = async (req, res) => {
 // Registrar pago de deuda a proveedor (disminuye saldo)
 export const registrarPagoCuentaCorrienteProveedor = async (req, res) => {
   const { id } = req.params
-  const { monto, punto_venta_id, notas, compra_id } = req.body
+  const { monto, punto_venta_id, notas, compra_id, tipo_pago } = req.body
   const proveedorId = Number(id)
 
   if (!req.user || !req.user.id) {
@@ -268,10 +281,7 @@ export const registrarPagoCuentaCorrienteProveedor = async (req, res) => {
       return res.status(404).json({ message: "Proveedor no encontrado" })
     }
 
-    const [cuentas] = await connection.query(
-      "SELECT id, saldo FROM cuentas_corrientes_proveedores WHERE proveedor_id = ? LIMIT 1",
-      [proveedorId],
-    )
+    const [cuentas] = await connection.query("SELECT id, saldo FROM cuentas_corrientes_proveedores WHERE proveedor_id = ? LIMIT 1", [proveedorId])
     if (cuentas.length === 0) {
       await connection.rollback()
       return res.status(400).json({ message: "El proveedor no tiene deuda registrada" })
@@ -285,58 +295,24 @@ export const registrarPagoCuentaCorrienteProveedor = async (req, res) => {
 
     const cuenta = cuentas[0]
     const saldoAnterior = Number(cuenta.saldo) || 0
-    const saldoNuevo = saldoAnterior - montoNumerico
 
-    await connection.query("UPDATE cuentas_corrientes_proveedores SET saldo = ?, fecha_ultimo_movimiento = NOW() WHERE id = ?", [
-      saldoNuevo,
-      cuenta.id,
-    ])
+    const pago = await registrarPagoInterno(connection, {
+      monto: montoNumerico,
+      tipo_pago: tipo_pago || "Efectivo",
+      referencia_id: Number(compra_id),
+      tipo_referencia: "compra",
+      cliente_id: null,
+      usuario_id: req.user.id,
+      punto_venta_id: Number(punto_venta_id),
+      notas: notas || `Pago de deuda a proveedor ${proveedores[0].nombre}`,
+      es_pago_inicial_compra: false,
+    })
 
-    const [movResult] = await connection.query(
-      `INSERT INTO movimientos_cuenta_corriente_proveedor (
-        cuenta_corriente_proveedor_id,
-        proveedor_id,
-        compra_id,
-        pago_id,
-        tipo,
-        monto,
-        saldo_anterior,
-        saldo_nuevo,
-        usuario_id,
-        notas,
-        fecha
-      ) VALUES (?, ?, ?, NULL, 'pago', ?, ?, ?, ?, ?, NOW())`,
-      [
-        cuenta.id,
-        proveedorId,
-        Number(compra_id),
-        montoNumerico,
-        saldoAnterior,
-        saldoNuevo,
-        req.user.id,
-        notas || "Pago de deuda a proveedor",
-      ],
+    const [cuentaActualizada] = await connection.query(
+      "SELECT saldo FROM cuentas_corrientes_proveedores WHERE proveedor_id = ? LIMIT 1",
+      [proveedorId],
     )
-
-    const [pagoResult] = await connection.query(
-      `INSERT INTO pagos (
-        monto, tipo_pago, referencia_id, tipo_referencia,
-        cliente_id, usuario_id, punto_venta_id, notas, fecha, caja_sesion_id
-      ) VALUES (?, ?, ?, 'compra', NULL, ?, ?, ?, NOW(), NULL)`,
-      [
-        montoNumerico,
-        "Pago cuenta corriente proveedor",
-        Number(compra_id),
-        req.user.id,
-        Number(punto_venta_id),
-        notas || `Pago de deuda a proveedor ${proveedores[0].nombre}`,
-      ],
-    )
-
-    await connection.query(
-      "UPDATE movimientos_cuenta_corriente_proveedor SET pago_id = ? WHERE id = ?",
-      [pagoResult.insertId, movResult.insertId],
-    )
+    const saldoNuevo = Number(cuentaActualizada[0]?.saldo) || 0
 
     await connection.commit()
 
@@ -344,8 +320,7 @@ export const registrarPagoCuentaCorrienteProveedor = async (req, res) => {
       message: "Pago de cuenta corriente del proveedor registrado",
       saldo_anterior: saldoAnterior,
       saldo_nuevo: saldoNuevo,
-      pago_id: pagoResult.insertId,
-      movimiento_id: movResult.insertId,
+      pago_id: pago.id,
     })
   } catch (error) {
     await connection.rollback()
