@@ -5,7 +5,7 @@ import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 // Obtener todas las devoluciones
 export const getDevoluciones = async (req, res) => {
   try {
-    // Parámetros de filtrado opcionales
+    // Par?metros de filtrado opcionales
     const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id } = req.query
 
     let query = `SELECT d.*, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre, v.numero_factura FROM devoluciones d LEFT JOIN usuarios u ON d.usuario_id = u.id LEFT JOIN clientes c ON d.cliente_id = c.id LEFT JOIN ventas v ON d.venta_id = v.id WHERE 1=1`
@@ -33,7 +33,7 @@ export const getDevoluciones = async (req, res) => {
 
     const [devoluciones] = await pool.query(query, queryParams)
 
-    // Para cada devolución, obtener los productos devueltos y los productos de reemplazo
+    // Para cada devoluci?n, obtener los productos devueltos y los productos de reemplazo
     for (const devolucion of devoluciones) {
       // Obtener productos devueltos
       const [productosDevueltos] = await pool.query(
@@ -58,7 +58,7 @@ export const getDevoluciones = async (req, res) => {
   }
 }
 
-// Obtener una devolución por ID
+// Obtener una devoluci?n por ID
 export const getDevolucionById = async (req, res) => {
   try {
     const { id } = req.params
@@ -69,7 +69,7 @@ export const getDevolucionById = async (req, res) => {
     )
 
     if (devoluciones.length === 0) {
-      return res.status(404).json({ message: "Devolución no encontrada" })
+      return res.status(404).json({ message: "Devoluci?n no encontrada" })
     }
 
     const devolucion = devoluciones[0]
@@ -91,12 +91,12 @@ export const getDevolucionById = async (req, res) => {
 
     res.json(devolucion)
   } catch (error) {
-    console.error("Error al obtener devolución:", error)
-    res.status(500).json({ message: "Error al obtener devolución" })
+    console.error("Error al obtener devoluci?n:", error)
+    res.status(500).json({ message: "Error al obtener devoluci?n" })
   }
 }
 
-// Crear una nueva devolución
+// Crear una nueva devoluci?n
 export const createDevolucion = async (req, res) => {
   // Validar los datos de entrada
   const errors = validationResult(req)
@@ -114,10 +114,11 @@ export const createDevolucion = async (req, res) => {
       productos_reemplazo = [],
       diferencia = 0,
       tipo_pago = null,
+      pagos = [],
       cliente_id = null,
     } = req.body
 
-    // Verificar que la venta existe y no está anulada
+    // Verificar que la venta existe y no est? anulada
     const [ventas] = await connection.query("SELECT * FROM ventas WHERE id = ? AND anulada = 0", [venta_id])
     if (ventas.length === 0) {
       await connection.rollback()
@@ -126,10 +127,10 @@ export const createDevolucion = async (req, res) => {
 
     const venta = ventas[0]
 
-    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    // Usar la funci?n utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
-    // Insertar la devolución y obtener el ID con fecha correcta
+    // Insertar la devoluci?n y obtener el ID con fecha correcta
     const [result] = await connection.query(
       `INSERT INTO devoluciones (venta_id, fecha, usuario_id, diferencia, cliente_id) VALUES (?, ?, ?, ?, ?)`,
       [venta_id, fechaActual, req.user.id, diferencia, cliente_id],
@@ -144,7 +145,7 @@ export const createDevolucion = async (req, res) => {
       let query
       let params
 
-      // Si se proporciona un detalle_venta_id específico, usarlo directamente
+      // Si se proporciona un detalle_venta_id espec?fico, usarlo directamente
       if (producto.detalle_venta_id) {
         query = `SELECT dv.*, COALESCE(SUM(dd.cantidad), 0) AS cantidad_devuelta FROM detalle_ventas dv LEFT JOIN detalle_devoluciones dd ON dv.id = dd.detalle_venta_id WHERE dv.id = ? GROUP BY dv.id`
         params = [producto.detalle_venta_id]
@@ -182,11 +183,11 @@ export const createDevolucion = async (req, res) => {
       if (producto.cantidad > cantidadDisponible) {
         await connection.rollback()
         return res.status(400).json({
-          message: `No se puede devolver ${producto.cantidad} unidades del producto ${producto.producto_id}. Solo hay ${cantidadDisponible} disponibles para devolución.`,
+          message: `No se puede devolver ${producto.cantidad} unidades del producto ${producto.producto_id}. Solo hay ${cantidadDisponible} disponibles para devoluci?n.`,
         })
       }
 
-      // Registrar el detalle de la devolución
+      // Registrar el detalle de la devoluci?n
       await connection.query(
         `INSERT INTO detalle_devoluciones (devolucion_id, detalle_venta_id, producto_id, cantidad, precio, tipo_devolucion, es_reemplazo) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -208,7 +209,7 @@ export const createDevolucion = async (req, res) => {
           [devolucionId, fechaActual, detalleVenta.id],
         )
       } else {
-        // Si es devolución parcial, no marcamos como devuelto pero guardamos la referencia
+        // Si es devoluci?n parcial, no marcamos como devuelto pero guardamos la referencia
         await connection.query(`UPDATE detalle_ventas SET devolucion_id = ?, fecha_devolucion = ? WHERE id = ?`, [
           devolucionId,
           fechaActual,
@@ -216,7 +217,7 @@ export const createDevolucion = async (req, res) => {
         ])
       }
 
-      // Actualizar el inventario si la devolución es normal (no defectuoso)
+      // Actualizar el inventario si la devoluci?n es normal (no defectuoso)
       if (producto.tipo_devolucion === "normal") {
         await connection.query(`UPDATE inventario SET stock = stock + ? WHERE producto_id = ? AND punto_venta_id = ?`, [
           producto.cantidad,
@@ -234,17 +235,17 @@ export const createDevolucion = async (req, res) => {
             devolucionId,
             req.user.id,
             fechaActual,
-            `Devolución de producto${producto.es_reemplazo ? " de reemplazo" : ""} - Venta #${venta.numero_factura}`,
+            `Devoluci?n de producto${producto.es_reemplazo ? " de reemplazo" : ""} - Venta #${venta.numero_factura}`,
           ],
         )
       } else if (producto.tipo_devolucion === "defectuoso") {
-        // Registrar en la tabla de pérdidas
+        // Registrar en la tabla de p?rdidas
         await connection.query(
           `INSERT INTO perdidas (producto_id, cantidad, motivo, devolucion_id, usuario_id, fecha) VALUES (?, ?, ?, ?, ?, ?)`,
           [
             producto.producto_id,
             producto.cantidad,
-            `Producto${producto.es_reemplazo ? " de reemplazo" : ""} defectuoso - Devolución`,
+            `Producto${producto.es_reemplazo ? " de reemplazo" : ""} defectuoso - Devoluci?n`,
             devolucionId,
             req.user.id,
             fechaActual,
@@ -255,7 +256,7 @@ export const createDevolucion = async (req, res) => {
 
     // Registrar los productos de reemplazo
     for (const producto of productos_reemplazo) {
-      // Obtener información del producto
+      // Obtener informaci?n del producto
       const [productos] = await connection.query("SELECT * FROM productos WHERE id = ?", [producto.producto_id])
       const productoInfo = productos[0]
 
@@ -282,7 +283,7 @@ export const createDevolucion = async (req, res) => {
           devolucionId,
           req.user.id,
           fechaActual,
-          `Producto de reemplazo - Devolución de venta #${venta.numero_factura}`,
+          `Producto de reemplazo - Devoluci?n de venta #${venta.numero_factura}`,
         ],
       )
 
@@ -309,7 +310,7 @@ export const createDevolucion = async (req, res) => {
 
     const nuevoSubtotal = totalesResult[0].nuevo_subtotal || 0
 
-    // Aplicar los mismos porcentajes de interés y descuento que tenía la venta original
+    // Aplicar los mismos porcentajes de inter?s y descuento que ten?a la venta original
     const porcentajeInteres = Number(venta.porcentaje_interes) || 0
     const porcentajeDescuento = Number(venta.porcentaje_descuento) || 0
 
@@ -357,7 +358,7 @@ export const createDevolucion = async (req, res) => {
             devolucionId,
             fechaActual,
             req.user.id,
-            `Crédito por devolución - Venta #${venta.numero_factura}`,
+            `Cr?dito por devoluci?n - Venta #${venta.numero_factura}`,
           ],
         )
       } else {
@@ -384,97 +385,123 @@ export const createDevolucion = async (req, res) => {
             devolucionId,
             fechaActual,
             req.user.id,
-            `Crédito por devolución - Venta #${venta.numero_factura}`,
+            `Cr?dito por devoluci?n - Venta #${venta.numero_factura}`,
           ],
         )
       }
     }
-    // Si hay diferencia y es a cargo del cliente (diferencia > 0), registrar el pago
+    // Si hay diferencia y es a cargo del cliente (diferencia > 0), registrar el/los pago(s)
     else if (diferencia > 0) {
-      // Registrar el pago
-      await connection.query(
-        `INSERT INTO pagos (monto, fecha, referencia_id, tipo_referencia, tipo_pago, cliente_id, usuario_id, punto_venta_id, notas) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?, ?)`,
-        [
-          diferencia,
-          fechaActual,
-          devolucionId,
-          tipo_pago,
-          cliente_id,
-          req.user.id,
-          venta.punto_venta_id,
-          `Pago por diferencia en devolución - Venta #${venta.numero_factura}`,
-        ],
-      )
+      // Normalizar la lista de pagos: admite m?ltiples m?todos (nuevo) o uno solo (legacy)
+      const pagosProcesar =
+        Array.isArray(pagos) && pagos.length > 0
+          ? pagos.map((p) => ({ tipo_pago: p.tipo_pago, monto: Number(p.monto || 0) }))
+          : [{ tipo_pago, monto: Number(diferencia) }]
 
-      // Si el tipo de pago es cuenta corriente, actualizar el saldo
-      if (tipo_pago && tipo_pago.toLowerCase().includes("cuenta") && cliente_id) {
-        // Verificar si el cliente tiene cuenta corriente
-        const [cuentas] = await connection.query(
-          "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
-          [cliente_id],
+      // Validar que cada pago tenga una forma de pago v?lida
+      if (pagosProcesar.some((p) => !p.tipo_pago || String(p.tipo_pago).trim() === "")) {
+        await connection.rollback()
+        return res.status(400).json({ message: "Cada pago debe tener una forma de pago v?lida" })
+      }
+
+      // Validar que la suma de los pagos cubra exactamente la diferencia
+      const totalPagos = pagosProcesar.reduce((sum, p) => sum + Number(p.monto || 0), 0)
+      if (Math.abs(totalPagos - Number(diferencia)) > 0.01) {
+        await connection.rollback()
+        return res.status(400).json({
+          message: `El total de los pagos (${totalPagos.toFixed(2)}) no coincide con la diferencia a pagar (${Number(
+            diferencia,
+          ).toFixed(2)})`,
+        })
+      }
+
+      for (const pagoItem of pagosProcesar) {
+        const montoPago = Number(pagoItem.monto || 0)
+        if (montoPago <= 0) continue
+
+        // Registrar el pago individual
+        await connection.query(
+          `INSERT INTO pagos (monto, fecha, referencia_id, tipo_referencia, tipo_pago, cliente_id, usuario_id, punto_venta_id, notas) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?, ?)`,
+          [
+            montoPago,
+            fechaActual,
+            devolucionId,
+            pagoItem.tipo_pago,
+            cliente_id,
+            req.user.id,
+            venta.punto_venta_id,
+            `Pago por diferencia en devoluci?n - Venta #${venta.numero_factura}`,
+          ],
         )
 
-        if (cuentas.length > 0) {
-          const cuenta = cuentas[0]
-          const saldoAnterior = Number.parseFloat(cuenta.saldo)
-          const diferenciaNumerica = Number.parseFloat(diferencia)
-          const nuevoSaldo = saldoAnterior + diferenciaNumerica // Aumentar el saldo (es un cargo)
+        // Si este pago es cuenta corriente, imputar su monto al saldo del cliente
+        if (pagoItem.tipo_pago && pagoItem.tipo_pago.toLowerCase().includes("cuenta") && cliente_id) {
+          // Verificar si el cliente tiene cuenta corriente
+          const [cuentas] = await connection.query(
+            "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
+            [cliente_id],
+          )
 
-          // Actualizar el saldo de la cuenta corriente
-          await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
-            nuevoSaldo,
-            fechaActual,
-            cuenta.id,
-          ])
+          if (cuentas.length > 0) {
+            const cuenta = cuentas[0]
+            const saldoAnterior = Number.parseFloat(cuenta.saldo)
+            const nuevoSaldo = saldoAnterior + montoPago // Aumentar el saldo (es un cargo)
 
-          // Registrar el movimiento en la cuenta corriente
-          await connection.query(
-            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
-            [
+            // Actualizar el saldo de la cuenta corriente
+            await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
+              nuevoSaldo,
+              fechaActual,
               cuenta.id,
-              diferenciaNumerica,
-              saldoAnterior.toFixed(2),
-              nuevoSaldo.toFixed(2),
-              devolucionId,
-              fechaActual,
-              req.user.id,
-              `Cargo por diferencia en devolución - Venta #${venta.numero_factura}`,
-            ],
-          )
-        } else {
-          // Si el cliente no tiene cuenta corriente, crearla
-          const saldoInicial = 0
-          const diferenciaNumerica = Number.parseFloat(diferencia)
-          const nuevoSaldo = saldoInicial + diferenciaNumerica
+            ])
 
-          const [resultCuenta] = await connection.query(
-            "INSERT INTO cuentas_corrientes (cliente_id, saldo, activo) VALUES (?, ?, 1)",
-            [cliente_id, nuevoSaldo],
-          )
+            // Registrar el movimiento en la cuenta corriente
+            await connection.query(
+              `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
+              [
+                cuenta.id,
+                montoPago,
+                saldoAnterior.toFixed(2),
+                nuevoSaldo.toFixed(2),
+                devolucionId,
+                fechaActual,
+                req.user.id,
+                `Cargo por diferencia en devoluci?n - Venta #${venta.numero_factura}`,
+              ],
+            )
+          } else {
+            // Si el cliente no tiene cuenta corriente, crearla
+            const saldoInicial = 0
+            const nuevoSaldo = saldoInicial + montoPago
 
-          const cuentaCorrienteId = resultCuenta.insertId
+            const [resultCuenta] = await connection.query(
+              "INSERT INTO cuentas_corrientes (cliente_id, saldo, activo) VALUES (?, ?, 1)",
+              [cliente_id, nuevoSaldo],
+            )
 
-          // Registrar el movimiento en la cuenta corriente
-          await connection.query(
-            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
-            [
-              cuentaCorrienteId,
-              diferenciaNumerica,
-              saldoInicial.toFixed(2), // Saldo anterior (cuenta nueva)
-              nuevoSaldo.toFixed(2), // Nuevo saldo
-              devolucionId,
-              fechaActual,
-              req.user.id,
-              `Cargo por diferencia en devolución - Venta #${venta.numero_factura}`,
-            ],
-          )
+            const cuentaCorrienteId = resultCuenta.insertId
+
+            // Registrar el movimiento en la cuenta corriente
+            await connection.query(
+              `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
+              [
+                cuentaCorrienteId,
+                montoPago,
+                saldoInicial.toFixed(2), // Saldo anterior (cuenta nueva)
+                nuevoSaldo.toFixed(2), // Nuevo saldo
+                devolucionId,
+                fechaActual,
+                req.user.id,
+                `Cargo por diferencia en devoluci?n - Venta #${venta.numero_factura}`,
+              ],
+            )
+          }
         }
       }
     }
 
     await connection.commit()
 
-    // Obtener la devolución completa para devolverla en la respuesta
+    // Obtener la devoluci?n completa para devolverla en la respuesta
     const [devoluciones] = await pool.query(
       `SELECT d.*, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre, v.numero_factura FROM devoluciones d LEFT JOIN usuarios u ON d.usuario_id = u.id LEFT JOIN clientes c ON d.cliente_id = c.id LEFT JOIN ventas v ON d.venta_id = v.id WHERE d.id = ?`,
       [devolucionId],
@@ -500,14 +527,14 @@ export const createDevolucion = async (req, res) => {
     res.status(201).json(devolucion)
   } catch (error) {
     await connection.rollback()
-    console.error("Error al crear devolución:", error)
-    res.status(500).json({ message: "Error al crear devolución" })
+    console.error("Error al crear devoluci?n:", error)
+    res.status(500).json({ message: "Error al crear devoluci?n" })
   } finally {
     connection.release()
   }
 }
 
-// Anular una devolución
+// Anular una devoluci?n
 export const anularDevolucion = async (req, res) => {
   // Validar los datos de entrada
   const errors = validationResult(req)
@@ -522,11 +549,11 @@ export const anularDevolucion = async (req, res) => {
     const { id } = req.params
     const { motivo } = req.body
 
-    // Verificar que la devolución existe y no está anulada
+    // Verificar que la devoluci?n existe y no est? anulada
     const [devoluciones] = await connection.query("SELECT * FROM devoluciones WHERE id = ? AND anulada = 0", [id])
     if (devoluciones.length === 0) {
       await connection.rollback()
-      return res.status(404).json({ message: "Devolución no encontrada o ya anulada" })
+      return res.status(404).json({ message: "Devoluci?n no encontrada o ya anulada" })
     }
 
     const devolucion = devoluciones[0]
@@ -542,11 +569,11 @@ export const anularDevolucion = async (req, res) => {
       id,
     ])
 
-    // Obtener información de la venta
+    // Obtener informaci?n de la venta
     const [ventas] = await connection.query("SELECT * FROM ventas WHERE id = ?", [devolucion.venta_id])
     const venta = ventas[0]
 
-    // Usar la función utilitaria para obtener la fecha actual en Argentina
+    // Usar la funci?n utilitaria para obtener la fecha actual en Argentina
     const fechaActual = formatearFechaParaDB()
 
     // Revertir los cambios en el inventario para los productos devueltos (tipo normal)
@@ -569,7 +596,7 @@ export const anularDevolucion = async (req, res) => {
             id,
             req.user.id,
             fechaActual,
-            `Anulación de devolución - Venta #${venta.numero_factura}`,
+            `Anulaci?n de devoluci?n - Venta #${venta.numero_factura}`,
           ],
         )
       }
@@ -600,7 +627,7 @@ export const anularDevolucion = async (req, res) => {
           id,
           req.user.id,
           fechaActual,
-          `Anulación de devolución - Venta #${venta.numero_factura}`,
+          `Anulaci?n de devoluci?n - Venta #${venta.numero_factura}`,
         ],
       )
 
@@ -611,7 +638,7 @@ export const anularDevolucion = async (req, res) => {
       )
     }
 
-    // Si hubo diferencia y se registró en cuenta corriente, revertir
+    // Si hubo diferencia y se registr? en cuenta corriente, revertir
     if (devolucion.diferencia !== 0 && devolucion.cliente_id) {
       // Verificar si el cliente tiene cuenta corriente
       const [cuentas] = await connection.query("SELECT * FROM cuentas_corrientes WHERE cliente_id = ?", [
@@ -624,7 +651,7 @@ export const anularDevolucion = async (req, res) => {
 
         let nuevoSaldo
         if (devolucion.diferencia < 0) {
-          // Si fue un crédito a favor, ahora sumamos al saldo
+          // Si fue un cr?dito a favor, ahora sumamos al saldo
           nuevoSaldo = saldoAnterior + Math.abs(Number.parseFloat(devolucion.diferencia))
         } else {
           // Si fue un cargo, ahora restamos del saldo
@@ -650,13 +677,13 @@ export const anularDevolucion = async (req, res) => {
             id,
             fechaActual,
             req.user.id,
-            `Anulación de devolución - Venta #${venta.numero_factura}: ${motivo}`,
+            `Anulaci?n de devoluci?n - Venta #${venta.numero_factura}: ${motivo}`,
           ],
         )
       }
     }
 
-    // Anular la devolución
+    // Anular la devoluci?n
     await connection.query(
       `UPDATE devoluciones SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?`,
       [fechaActual, motivo, id],
@@ -675,17 +702,17 @@ export const anularDevolucion = async (req, res) => {
 
     await connection.commit()
 
-    res.json({ message: "Devolución anulada correctamente" })
+    res.json({ message: "Devoluci?n anulada correctamente" })
   } catch (error) {
     await connection.rollback()
-    console.error("Error al anular devolución:", error)
-    res.status(500).json({ message: "Error al anular devolución" })
+    console.error("Error al anular devoluci?n:", error)
+    res.status(500).json({ message: "Error al anular devoluci?n" })
   } finally {
     connection.release()
   }
 }
 
-// Modificar la función getDevolucionesByVenta para incluir información sobre productos de reemplazo
+// Modificar la funci?n getDevolucionesByVenta para incluir informaci?n sobre productos de reemplazo
 export const getDevolucionesByVenta = async (req, res) => {
   try {
     const { ventaId } = req.params
@@ -695,7 +722,7 @@ export const getDevolucionesByVenta = async (req, res) => {
       [ventaId],
     )
 
-    // Para cada devolución, obtener los productos devueltos y los productos de reemplazo
+    // Para cada devoluci?n, obtener los productos devueltos y los productos de reemplazo
     for (const devolucion of devoluciones) {
       // Obtener productos devueltos
       const [productosDevueltos] = await pool.query(

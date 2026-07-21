@@ -38,6 +38,15 @@ const validateDevolucion = [
     .withMessage("La cantidad debe ser un número")
     .custom((value) => value > 0)
     .withMessage("La cantidad debe ser mayor a cero"),
+  // Pagos de la diferencia (múltiples métodos): opcionales
+  check("pagos").optional().isArray().withMessage("Formato inválido para los pagos"),
+  check("pagos.*.monto")
+    .optional()
+    .isNumeric()
+    .withMessage("El monto del pago debe ser numérico")
+    .custom((value) => Number(value) > 0)
+    .withMessage("El monto del pago debe ser mayor a cero"),
+  check("pagos.*.tipo_pago").optional().notEmpty().withMessage("Cada pago debe tener una forma de pago"),
 ]
 
 // Validaciones para anular devolución
