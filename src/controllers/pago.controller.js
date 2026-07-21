@@ -14,14 +14,6 @@ function esCuentaCorrienteProveedor(tipo_pago, tipo_referencia) {
   return t.includes("cuenta corriente proveedor")
 }
 
-const obtenerCajaSesionAbierta = async (connection, punto_venta_id) => {
-  const [sesiones] = await connection.query(
-    "SELECT id FROM caja_sesiones WHERE punto_venta_id = ? AND estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1",
-    [punto_venta_id],
-  )
-  return sesiones[0] || null
-}
-
 const normalizarMonto = (monto) => {
   const valor = Number(monto)
   return Number.isFinite(valor) ? valor : 0
@@ -359,33 +351,9 @@ export const registrarPagoInterno = async (
         })
       }
 
-      // Los pagos reales de compra (no cuenta corriente proveedor) deben salir de caja como egreso.
-      if (!esCuentaCorrienteProveedor(tipo_pago, tipo_referencia)) {
-        const sesionCaja = await obtenerCajaSesionAbierta(connection, punto_venta_id)
-        if (!sesionCaja) {
-          throw new Error("No hay caja abierta para registrar el pago de compra")
-        }
-
-        await connection.query(
-          `INSERT INTO caja_movimientos (
-            caja_sesion_id,
-            tipo,
-            concepto,
-            monto,
-            metodo_pago,
-            origen,
-            usuario_id,
-            fecha
-          ) VALUES (?, 'egreso', ?, ?, ?, 'general', ?, NOW())`,
-          [
-            sesionCaja.id,
-            `Pago a proveedor por compra #${compra.numero_comprobante}`,
-            montoNumerico,
-            tipo_pago || null,
-            usuario_id,
-          ],
-        )
-      }
+      // Las compras NO impactan en la sesión de caja: el pago a proveedores no sale
+      // del efectivo de caja. Las compras se reflejan como egreso solo en Reportes
+      // (a partir de la tabla de compras), no en caja_movimientos.
     }
   }
 

@@ -348,14 +348,23 @@ export const createCompra = async (req, res) => {
     const montoDescuento = (subtotal * Number(porcentaje_descuento || 0)) / 100
     const total = subtotal - montoDescuento
 
-    if (pagos && pagos.length > 0) {
-      const totalPagado = pagos.reduce((sum, pago) => sum + Number(pago.monto || 0), 0)
-      if (Math.abs(totalPagado - total) > 0.01) {
-        await connection.rollback()
-        return res.status(400).json({
-          message: `El monto total de los pagos (${totalPagado.toFixed(2)}) no coincide con el total de la compra (${total.toFixed(2)})`,
-        })
-      }
+    if (!pagos || pagos.length === 0) {
+      await connection.rollback()
+      return res.status(400).json({ message: "Debe registrar al menos una forma de pago para la compra" })
+    }
+
+    const pagoSinTipo = pagos.some((pago) => !pago.tipo_pago || String(pago.tipo_pago).trim() === "")
+    if (pagoSinTipo) {
+      await connection.rollback()
+      return res.status(400).json({ message: "Cada pago debe tener una forma de pago válida" })
+    }
+
+    const totalPagado = pagos.reduce((sum, pago) => sum + Number(pago.monto || 0), 0)
+    if (Math.abs(totalPagado - total) > 0.01) {
+      await connection.rollback()
+      return res.status(400).json({
+        message: `El monto total de los pagos (${totalPagado.toFixed(2)}) no coincide con el total de la compra (${total.toFixed(2)})`,
+      })
     }
 
     const numeroComprobante = await generarNumeroCompra()
