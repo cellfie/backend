@@ -31,8 +31,39 @@ import preciosCanjesRoutes from "./routes/precios-canjes.routes.js"
 import usuariosRoutes from "./routes/usuarios.routes.js"
 
 import { FRONTEND_URL, FRONTEND_URL_WWW, FRONTEND_URL_DEV } from "./config.js"
+import { fechaParaAPI } from "./utils/dateUtils.js"
 
 const app = express()
+
+// Normaliza recursivamente todas las fechas de las respuestas JSON.
+// mysql2 devuelve las columnas DATETIME/TIMESTAMP como objetos Date; al
+// serializarlos por defecto se convierten a UTC (terminan en "Z"), lo que hacía
+// que el frontend mostrara la hora 3 h antes. Aquí convertimos cada Date a un
+// string ISO con offset argentino (-03:00) para que TODOS los módulos muestren
+// la hora correcta sin parches manuales en el cliente.
+const normalizarFechasRespuesta = (valor, vistos) => {
+  if (valor == null) return valor
+  if (valor instanceof Date) return fechaParaAPI(valor)
+  if (typeof valor !== "object") return valor
+  if (vistos.has(valor)) return valor
+  vistos.add(valor)
+  if (Array.isArray(valor)) {
+    for (let i = 0; i < valor.length; i++) {
+      valor[i] = normalizarFechasRespuesta(valor[i], vistos)
+    }
+    return valor
+  }
+  for (const clave of Object.keys(valor)) {
+    valor[clave] = normalizarFechasRespuesta(valor[clave], vistos)
+  }
+  return valor
+}
+
+const middlewareNormalizarFechas = (req, res, next) => {
+  const jsonOriginal = res.json.bind(res)
+  res.json = (body) => jsonOriginal(normalizarFechasRespuesta(body, new WeakSet()))
+  next()
+}
 
 const allowedOrigins = [ 
   "http://localhost:5173", // Asegúrate de agregar el puerto 5173, donde está corriendo tu frontend
@@ -61,6 +92,7 @@ app.use(express.json())
 app.use(cookieParser())
 app.use(bodyParser.json())
 app.use(cors(corsOptions))
+app.use(middlewareNormalizarFechas)
 
 // Rutas principales
 app.use("/api/auth", authRoutes)

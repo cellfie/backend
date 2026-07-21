@@ -13,6 +13,15 @@ try {
         timezone: 'Z', 
     });
 
+    // Forzar la zona horaria de Argentina (UTC-3) en cada conexión del pool.
+    // Así NOW(), CURRENT_TIMESTAMP y los DEFAULT de las tablas guardan siempre
+    // la hora "de pared" argentina, sin depender de la zona horaria del servidor
+    // (Railway/otros corren en UTC). Combinado con `timezone: 'Z'` de mysql2, los
+    // dígitos guardados se leen tal cual y luego se etiquetan como -03:00.
+    pool.on('connection', (connection) => {
+        connection.query("SET time_zone = '-03:00'");
+    });
+
      // Probar la conexión
      const testConnection = async () => {
         try {
