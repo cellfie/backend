@@ -140,6 +140,20 @@ export const getProductosPaginados = async (req, res) => {
     const [countResult] = await pool.query(countQuery, params)
     const total = countResult[0].total
 
+    // Resolver el ordenamiento de forma segura (lista blanca) para evitar inyección
+    // y para soportar la columna calculada `fecha_ultima_compra` (que no lleva prefijo p.)
+    const sortColumnMap = {
+      fecha_creacion: "p.fecha_creacion",
+      fecha_actualizacion: "p.fecha_actualizacion",
+      fecha_ultima_compra: "fecha_ultima_compra",
+      nombre: "p.nombre",
+      precio: "p.precio",
+      precio_costo: "p.precio_costo",
+      stock: "COALESCE(i.stock, 0)",
+    }
+    const orderColumn = sortColumnMap[sort_by] || "p.fecha_creacion"
+    const orderDir = String(sort_order).toUpperCase() === "ASC" ? "ASC" : "DESC"
+
     const dataQuery = `
       SELECT DISTINCT
         p.id, 
@@ -150,6 +164,12 @@ export const getProductosPaginados = async (req, res) => {
         p.precio_costo,
         p.fecha_creacion,
         p.fecha_actualizacion,
+        (
+          SELECT MAX(cmp.fecha)
+          FROM detalle_compras dc
+          JOIN compras cmp ON dc.compra_id = cmp.id
+          WHERE dc.producto_id = p.id AND cmp.anulada = 0
+        ) AS fecha_ultima_compra,
         c.nombre AS categoria,
         c.id AS categoria_id,
         COALESCE(i.stock, 0) AS stock,
@@ -160,7 +180,7 @@ export const getProductosPaginados = async (req, res) => {
         desc_activo.fecha_inicio AS descuento_fecha_inicio,
         desc_activo.fecha_fin AS descuento_fecha_fin
       ${baseQuery}
-      ORDER BY p.${sort_by} ${sort_order}
+      ORDER BY ${orderColumn} IS NULL, ${orderColumn} ${orderDir}
       LIMIT ? OFFSET ?
     `
 
@@ -254,6 +274,12 @@ export const getProductoById = async (req, res) => {
         p.precio_costo,
         p.fecha_creacion,
         p.fecha_actualizacion,
+        (
+          SELECT MAX(cmp.fecha)
+          FROM detalle_compras dc
+          JOIN compras cmp ON dc.compra_id = cmp.id
+          WHERE dc.producto_id = p.id AND cmp.anulada = 0
+        ) AS fecha_ultima_compra,
         c.nombre AS categoria,
         c.id AS categoria_id,
         COALESCE(i.stock, 0) AS stock,
