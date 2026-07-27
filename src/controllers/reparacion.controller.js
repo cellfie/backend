@@ -54,7 +54,7 @@ const generarNumeroTicket = async (puntoVentaId) => {
 export const getReparaciones = async (req, res) => {
   try {
     // Parámetros de filtrado opcionales
-    const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, estado } = req.query
+    const { fecha_inicio, fecha_fin, cliente_id, punto_venta_id, estado, search } = req.query
 
     let query = `
       SELECT r.*, 
@@ -94,46 +94,90 @@ export const getReparaciones = async (req, res) => {
       queryParams.push(estado)
     }
 
+    // Búsqueda por texto (cliente, ticket, id, marca/modelo del equipo).
+    // Crítico para empleados: evita traer TODAS las reparaciones y filtrar en cliente.
+    const terminoBusqueda = typeof search === "string" ? search.trim() : ""
+    if (terminoBusqueda) {
+      const like = `%${terminoBusqueda}%`
+      query += `
+        AND (
+          c.nombre LIKE ?
+          OR c.telefono LIKE ?
+          OR c.dni LIKE ?
+          OR r.numero_ticket LIKE ?
+          OR CAST(r.id AS CHAR) LIKE ?
+          OR EXISTS (
+            SELECT 1 FROM equipos_reparacion er
+            WHERE er.reparacion_id = r.id
+              AND (er.marca LIKE ? OR er.modelo LIKE ? OR er.imei LIKE ?)
+          )
+        )
+      `
+      queryParams.push(like, like, like, like, like, like, like, like)
+    }
+
     query += " ORDER BY r.fecha_ingreso DESC"
+
+    // Sin fechas ni búsqueda el dataset puede ser enorme (N+1 de equipo/detalles/pagos).
+    // Limitar solo en ese caso extremo; con search o fechas el volumen ya es manejable.
+    if (!fecha_inicio && !fecha_fin && !terminoBusqueda) {
+      query += " LIMIT 200"
+    } else if (terminoBusqueda && !fecha_inicio && !fecha_fin) {
+      query += " LIMIT 100"
+    }
 
     const [reparaciones] = await pool.query(query, queryParams)
 
-    // Para cada reparación, obtener el equipo y los detalles
+    if (reparaciones.length === 0) {
+      return res.json([])
+    }
+
+    const ids = reparaciones.map((r) => r.id)
+    const placeholders = ids.map(() => "?").join(",")
+
+    // Cargar relaciones en lote (evita N+1: 3 queries por reparación)
+    const [equipos] = await pool.query(
+      `SELECT * FROM equipos_reparacion WHERE reparacion_id IN (${placeholders})`,
+      ids,
+    )
+    const [detalles] = await pool.query(
+      `SELECT * FROM detalles_reparacion WHERE reparacion_id IN (${placeholders})`,
+      ids,
+    )
+    const [pagos] = await pool.query(
+      `SELECT * FROM pagos_reparacion WHERE reparacion_id IN (${placeholders})`,
+      ids,
+    )
+
+    const equiposPorReparacion = new Map()
+    for (const equipo of equipos) {
+      // Una reparación tiene un equipo; si hubiera más, nos quedamos con el primero
+      if (!equiposPorReparacion.has(equipo.reparacion_id)) {
+        equiposPorReparacion.set(equipo.reparacion_id, equipo)
+      }
+    }
+
+    const detallesPorReparacion = new Map()
+    for (const detalle of detalles) {
+      if (!detallesPorReparacion.has(detalle.reparacion_id)) {
+        detallesPorReparacion.set(detalle.reparacion_id, [])
+      }
+      detallesPorReparacion.get(detalle.reparacion_id).push(detalle)
+    }
+
+    const pagosPorReparacion = new Map()
+    for (const pago of pagos) {
+      if (!pagosPorReparacion.has(pago.reparacion_id)) {
+        pagosPorReparacion.set(pago.reparacion_id, [])
+      }
+      pagosPorReparacion.get(pago.reparacion_id).push(pago)
+    }
+
     for (const reparacion of reparaciones) {
-      // Obtener el equipo
-      const [equipos] = await pool.query(
-        `
-        SELECT * FROM equipos_reparacion 
-        WHERE reparacion_id = ?
-      `,
-        [reparacion.id],
-      )
+      reparacion.equipo = equiposPorReparacion.get(reparacion.id) || null
+      reparacion.detalles = detallesPorReparacion.get(reparacion.id) || []
+      reparacion.pagos = pagosPorReparacion.get(reparacion.id) || []
 
-      reparacion.equipo = equipos.length > 0 ? equipos[0] : null
-
-      // Obtener los detalles de la reparación
-      const [detalles] = await pool.query(
-        `
-        SELECT * FROM detalles_reparacion 
-        WHERE reparacion_id = ?
-      `,
-        [reparacion.id],
-      )
-
-      reparacion.detalles = detalles
-
-      // Obtener los pagos de la reparación
-      const [pagos] = await pool.query(
-        `
-        SELECT * FROM pagos_reparacion 
-        WHERE reparacion_id = ?
-      `,
-        [reparacion.id],
-      )
-
-      reparacion.pagos = pagos
-
-      // Calcular el saldo pendiente
       const totalReparacion = Number.parseFloat(reparacion.total) || 0
       const totalPagado = Number.parseFloat(reparacion.total_pagado) || 0
       reparacion.saldo_pendiente = totalReparacion - totalPagado
