@@ -308,77 +308,73 @@ export const searchRepuestos = async (req, res) => {
   try {
     const { query, punto_venta_id, min_stock, max_stock } = req.query
 
+    // Una sola query con JOIN (evita N+1 que hacía lenta la consulta de precios)
     let sql = `
-            SELECT 
-                r.id, 
-                r.nombre,
-                r.descripcion,
-                r.precio
-            FROM repuestos r
-            LEFT JOIN inventario_repuestos i ON r.id = i.repuesto_id
-            WHERE 1=1
-        `
-
+      SELECT
+        r.id,
+        r.nombre,
+        r.descripcion,
+        r.precio,
+        COALESCE(i.stock, 0) AS stock,
+        i.punto_venta_id,
+        pv.nombre AS punto_venta
+      FROM repuestos r
+    `
     const params = []
 
-    // Filtrar por término de búsqueda
+    if (punto_venta_id) {
+      // Inventario del punto de venta específico
+      sql += `
+        INNER JOIN inventario_repuestos i
+          ON r.id = i.repuesto_id AND i.punto_venta_id = ?
+        LEFT JOIN puntos_venta pv ON i.punto_venta_id = pv.id
+        WHERE 1=1
+      `
+      params.push(punto_venta_id)
+    } else {
+      // Sin filtro de PV: un registro por repuesto (primer inventario disponible)
+      sql += `
+        LEFT JOIN inventario_repuestos i
+          ON r.id = i.repuesto_id
+          AND i.id = (
+            SELECT i2.id
+            FROM inventario_repuestos i2
+            WHERE i2.repuesto_id = r.id
+            ORDER BY i2.id ASC
+            LIMIT 1
+          )
+        LEFT JOIN puntos_venta pv ON i.punto_venta_id = pv.id
+        WHERE 1=1
+      `
+    }
+
     if (query) {
       sql += ` AND (r.nombre LIKE ? OR r.descripcion LIKE ?)`
       const searchTerm = `%${query}%`
       params.push(searchTerm, searchTerm)
     }
 
-    // Filtrar por punto de venta
-    if (punto_venta_id) {
-      sql += ` AND i.punto_venta_id = ?`
-      params.push(punto_venta_id)
-    }
-
-    // Filtrar por rango de stock
     if (min_stock !== undefined) {
-      sql += ` AND i.stock >= ?`
+      sql += ` AND COALESCE(i.stock, 0) >= ?`
       params.push(min_stock)
     }
 
     if (max_stock !== undefined) {
-      sql += ` AND i.stock <= ?`
+      sql += ` AND COALESCE(i.stock, 0) <= ?`
       params.push(max_stock)
     }
 
-    // Agrupar por repuesto para evitar duplicados
-    sql += ` GROUP BY r.id ORDER BY r.nombre ASC`
+    sql += ` ORDER BY r.nombre ASC`
 
     const [repuestos] = await pool.query(sql, params)
 
-    // Obtener inventario para cada repuesto
-    for (const repuesto of repuestos) {
-      // Obtener información de inventario
-      const [inventario] = await pool.query(
-        `
-                SELECT 
-                    i.stock,
-                    pv.id AS punto_venta_id,
-                    pv.nombre AS punto_venta
-                FROM inventario_repuestos i
-                JOIN puntos_venta pv ON i.punto_venta_id = pv.id
-                WHERE i.repuesto_id = ?
-            `,
-        [repuesto.id],
-      )
-
-      // Asignar inventario al repuesto
-      if (inventario.length > 0) {
-        repuesto.stock = inventario[0].stock
-        repuesto.punto_venta_id = inventario[0].punto_venta_id
-        repuesto.punto_venta = inventario[0].punto_venta
-      } else {
-        repuesto.stock = 0
-        repuesto.punto_venta_id = null
-        repuesto.punto_venta = null
-      }
-    }
-
-    res.json(repuestos)
+    res.json(
+      repuestos.map((r) => ({
+        ...r,
+        precio: Number.parseFloat(r.precio) || 0,
+        stock: Number.parseInt(r.stock, 10) || 0,
+      })),
+    )
   } catch (error) {
     console.error("Error al buscar repuestos:", error)
     res.status(500).json({ message: "Error al buscar repuestos" })
