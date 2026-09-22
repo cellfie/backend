@@ -58,17 +58,27 @@ const mapearMovimiento = (mov) => ({
     : null,
 })
 
-/** Lista usuarios activos con saldo de C/C (para selector de retiro en caja). */
+/** Lista usuarios activos con saldo de C/C (para selector de retiro en caja).
+ *  Admin: todos. Empleado: solo el propio usuario.
+ */
 export const getUsuariosParaRetiro = async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT u.id, u.nombre, u.rol, u.activo,
-              COALESCE(cce.saldo, 0) AS saldo_cuenta_corriente
-       FROM usuarios u
-       LEFT JOIN cuentas_corrientes_empleados cce ON cce.usuario_id = u.id
-       WHERE COALESCE(u.activo, 1) = 1
-       ORDER BY u.nombre ASC`,
-    )
+    const esAdmin = req.user?.role === "admin" || req.user?.rol === "admin"
+    const params = []
+    let sql = `
+      SELECT u.id, u.nombre, u.rol, u.activo,
+             COALESCE(cce.saldo, 0) AS saldo_cuenta_corriente
+      FROM usuarios u
+      LEFT JOIN cuentas_corrientes_empleados cce ON cce.usuario_id = u.id
+      WHERE COALESCE(u.activo, 1) = 1
+    `
+    if (!esAdmin) {
+      sql += " AND u.id = ?"
+      params.push(req.user.id)
+    }
+    sql += " ORDER BY u.nombre ASC"
+
+    const [rows] = await pool.query(sql, params)
 
     res.json(
       rows.map((u) => ({
@@ -157,11 +167,17 @@ export const registrarRetiroEmpleado = async (req, res) => {
 
   const { caja_sesion_id, empleado_usuario_id, monto, metodo_pago, notas } = req.body
   const montoNum = Number(monto)
-  const empleadoId = Number(empleado_usuario_id)
   const sesionId = Number(caja_sesion_id)
+  const esAdmin = req.user?.role === "admin" || req.user?.rol === "admin"
+  // Empleado solo puede retirar a su propia cuenta; admin puede elegir a cualquiera
+  const empleadoId = esAdmin ? Number(empleado_usuario_id) : Number(req.user.id)
 
   if (!sesionId || !empleadoId || !Number.isFinite(montoNum) || montoNum <= 0) {
     return res.status(400).json({ message: "Datos de retiro inválidos" })
+  }
+
+  if (!esAdmin && Number(empleado_usuario_id) && Number(empleado_usuario_id) !== Number(req.user.id)) {
+    return res.status(403).json({ message: "Solo podés registrar un retiro a tu propia cuenta" })
   }
 
   const connection = await pool.getConnection()
