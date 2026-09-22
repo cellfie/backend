@@ -10,6 +10,10 @@ import {
   getMovimientosCaja,
   getMovimientosCompletosCaja,
 } from "../controllers/caja.controller.js"
+import {
+  getUsuariosParaRetiro,
+  registrarRetiroEmpleado,
+} from "../controllers/empleado-cuenta-corriente.controller.js"
 import { verifyToken } from "../middlewares/verifyToken.js"
 
 const router = Router()
@@ -52,8 +56,25 @@ const validateMovimientoCaja = [
     .withMessage("Origen de movimiento inválido"),
 ]
 
+const validateRetiroEmpleado = [
+  check("caja_sesion_id").isNumeric().withMessage("ID de sesión de caja inválido"),
+  check("empleado_usuario_id").isNumeric().withMessage("Empleado inválido"),
+  check("monto")
+    .isNumeric()
+    .withMessage("El monto debe ser un número")
+    .custom((value) => Number(value) > 0)
+    .withMessage("El monto debe ser mayor a cero"),
+]
+
 // Rutas principales de caja
 router.get("/actual", verifyToken(["admin", "empleado"]), getCajaActual)
+router.get("/usuarios-retiro", verifyToken(["admin", "empleado"]), getUsuariosParaRetiro)
+router.post(
+  "/retiro-empleado",
+  verifyToken(["admin", "empleado"]),
+  validateRetiroEmpleado,
+  registrarRetiroEmpleado,
+)
 router.get("/sesion/:id/movimientos-completos", verifyToken(["admin", "empleado"]), getMovimientosCompletosCaja)
 router.get("/sesion/:id", verifyToken(["admin", "empleado"]), getSesionCajaPorId)
 router.post("/abrir", verifyToken(["admin", "empleado"]), validateAbrirCaja, abrirCaja)

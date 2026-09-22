@@ -138,6 +138,12 @@ export const createDevolucion = async (req, res) => {
 
     const devolucionId = result.insertId
 
+    // Factor de lo realmente pagado: el descuento global de la venta se aplica al total,
+    // no a cada l?nea (precio_con_descuento). As? la devoluci?n usa el precio pagado.
+    const subtotalVenta = Number(venta.subtotal) || 0
+    const totalVenta = Number(venta.total) || 0
+    const factorPagado = subtotalVenta > 0.0001 ? totalVenta / subtotalVenta : 1
+
     // Verificar que los productos a devolver pertenecen a la venta y no han sido devueltos ya
     for (const producto of productos_devueltos) {
       // Verificar si es un producto original o un producto de reemplazo
@@ -187,7 +193,9 @@ export const createDevolucion = async (req, res) => {
         })
       }
 
-      // Registrar el detalle de la devoluci?n
+      // Registrar el detalle de la devoluci?n con el precio efectivamente pagado
+      const precioEfectivoPagado = Number(detalleVenta.precio_con_descuento || 0) * factorPagado
+
       await connection.query(
         `INSERT INTO detalle_devoluciones (devolucion_id, detalle_venta_id, producto_id, cantidad, precio, tipo_devolucion, es_reemplazo) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -195,7 +203,7 @@ export const createDevolucion = async (req, res) => {
           detalleVenta.id,
           producto.producto_id,
           producto.cantidad,
-          detalleVenta.precio_con_descuento,
+          precioEfectivoPagado,
           producto.tipo_devolucion,
           producto.es_reemplazo ? 1 : 0,
         ],

@@ -2,6 +2,10 @@ import { Router } from "express"
 import { check } from "express-validator"
 import { verifyToken } from "../middlewares/verifyToken.js"
 import { getUsuarios, createUsuario, updateUsuario, deleteUsuario } from "../controllers/usuarios.controller.js"
+import {
+  getCuentaCorrienteEmpleado,
+  registrarPagoCuentaCorrienteEmpleado,
+} from "../controllers/empleado-cuenta-corriente.controller.js"
 
 const router = Router()
 
@@ -28,8 +32,23 @@ const validateUpdateUsuario = [
   check("activo").optional().isIn([0, 1, "0", "1", true, false]).withMessage("Activo inválido"),
 ]
 
+const validatePagoCcEmpleado = [
+  check("monto")
+    .isNumeric()
+    .withMessage("El monto debe ser un número")
+    .custom((value) => Number(value) > 0)
+    .withMessage("El monto debe ser mayor a cero"),
+]
+
 router.get("/", verifyToken(["admin"]), getUsuarios)
 router.post("/", verifyToken(["admin"]), validateCreateUsuario, createUsuario)
+router.get("/:id/cuenta-corriente", verifyToken(["admin"]), getCuentaCorrienteEmpleado)
+router.post(
+  "/:id/cuenta-corriente/pagos",
+  verifyToken(["admin"]),
+  validatePagoCcEmpleado,
+  registrarPagoCuentaCorrienteEmpleado,
+)
 router.put("/:id", verifyToken(["admin"]), validateUpdateUsuario, updateUsuario)
 router.delete("/:id", verifyToken(["admin"]), deleteUsuario)
 

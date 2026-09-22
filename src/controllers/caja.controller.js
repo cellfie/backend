@@ -863,13 +863,14 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       tipo,
       usuario_nombre: row.usuario_nombre || "",
       origen: origenRow ?? row.origen ?? null,
+      tipo_referencia: row.tipo_referencia || null,
     })
 
     let todos = []
 
     if (origen === "manual") {
       const [manual] = await pool.query(
-        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen, cm.tipo_referencia
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
          WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
@@ -910,7 +911,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       )
 
       const [manual] = await pool.query(
-        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen, cm.tipo_referencia
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
          WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
@@ -943,7 +944,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       )
 
       const [manual] = await pool.query(
-        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen, cm.tipo_referencia
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
          WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
@@ -975,7 +976,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       )
 
       const [manual] = await pool.query(
-        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen, cm.tipo_referencia
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
          WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
@@ -1072,7 +1073,7 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       )
 
       const [manual] = await pool.query(
-        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen
+        `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen, cm.tipo_referencia
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
          WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
