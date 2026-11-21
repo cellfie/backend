@@ -31,6 +31,45 @@ function sumarTotalesFilas(rows) {
   return rows.reduce((s, r) => s + (Number(r.total) || 0), 0)
 }
 
+/** Une totales de devoluciones (pagos) a los de ventas productos por tipo_pago. */
+function fusionarTotalesPorTipoPago(baseRows, extraRows) {
+  const map = new Map()
+  ;(baseRows || []).forEach((r) => {
+    const key = r.tipo_pago || "Otro"
+    map.set(key, (map.get(key) || 0) + (Number(r.total) || 0))
+  })
+  ;(extraRows || []).forEach((r) => {
+    const key = r.tipo_pago || "Otro"
+    map.set(key, (map.get(key) || 0) + (Number(r.total) || 0))
+  })
+  return Array.from(map.entries()).map(([tipo_pago, total]) => ({ tipo_pago, total }))
+}
+
+/**
+ * Pagos de diferencia en devoluciones (no cuenta corriente) ligados a la sesión.
+ */
+async function queryTotalesPagosDevolucion(poolOrConn, sesion) {
+  const [rows] = await poolOrConn.query(
+    `SELECT p.tipo_pago, SUM(p.monto) AS total
+     FROM pagos p
+     WHERE p.tipo_referencia = 'devolucion'
+       AND p.anulado = 0
+       AND (
+         p.caja_sesion_id = ?
+         OR (
+           p.caja_sesion_id IS NULL
+           AND p.punto_venta_id = ?
+           AND p.fecha >= ?
+           AND p.fecha <= COALESCE(?, NOW())
+         )
+       )
+       ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
+     GROUP BY p.tipo_pago`,
+    [sesion.id, sesion.punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+  )
+  return rows
+}
+
 /** Expone desglose_cierre parseado y oculta la columna cruda JSON en la API */
 function normalizarSesionCajaParaAPI(sesion) {
   if (!sesion) return sesion
@@ -69,6 +108,11 @@ async function computeSaldoTeoricoArqueo(sesion) {
      GROUP BY p.tipo_pago`,
     [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
   )
+  const totalesDevoluciones = await queryTotalesPagosDevolucion(pool, sesion)
+  const totalesVentasProductosConDev = fusionarTotalesPorTipoPago(
+    totalesVentasProductos,
+    totalesDevoluciones,
+  )
   const [totalesVentasEquipos] = await pool.query(
     `SELECT pe.tipo_pago, SUM(pe.monto_ars) AS total
      FROM pagos_ventas_equipos pe
@@ -101,7 +145,7 @@ async function computeSaldoTeoricoArqueo(sesion) {
   )
 
   // Todos los movimientos de caja_movimientos afectan el efectivo físico
-  // (egreso manual, retiro empleado, etc.), sin filtrar por origen.
+  // (egreso manual, retiro empleado, reembolso devolución, etc.), sin filtrar por origen.
   const [movimientosCaja] = await pool.query(
     `SELECT tipo, SUM(monto) AS total FROM caja_movimientos WHERE caja_sesion_id = ? GROUP BY tipo`,
     [id],
@@ -116,7 +160,7 @@ async function computeSaldoTeoricoArqueo(sesion) {
   const montoApertura = Number(sesion.monto_apertura) || 0
   return (
     montoApertura +
-    sumarTotalesFilas(totalesVentasProductos) +
+    sumarTotalesFilas(totalesVentasProductosConDev) +
     sumarTotalesFilas(totalesVentasEquipos) +
     sumarTotalesFilas(totalesReparaciones) +
     sumarTotalesFilas(totalesPagosClienteCc) +
@@ -213,8 +257,8 @@ export const getCajaActual = async (req, res) => {
       }
     })
 
-    // Totales de pagos de VENTAS DE PRODUCTOS: por sesi?n (caja_sesion_id) o por rango de fechas si es legacy (NULL)
-    const [totalesVentasProductos] = await pool.query(
+    // Totales de pagos de VENTAS DE PRODUCTOS: por sesión (caja_sesion_id) o por rango de fechas si es legacy (NULL)
+    const [totalesVentasProductosRaw] = await pool.query(
       `SELECT 
           p.tipo_pago,
           SUM(p.monto) AS total
@@ -236,7 +280,14 @@ export const getCajaActual = async (req, res) => {
       [sesion.id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
-    // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos) ligados a la sesi?n actual
+    // Diferencias cobradas en devoluciones (suman al arqueo junto a ventas productos)
+    const totalesPagosDevoluciones = await queryTotalesPagosDevolucion(pool, sesion)
+    const totalesVentasProductos = fusionarTotalesPorTipoPago(
+      totalesVentasProductosRaw,
+      totalesPagosDevoluciones,
+    )
+
+    // Totales de pagos de VENTAS DE EQUIPOS (tabla pagos_ventas_equipos) ligados a la sesión actual
     const [totalesVentasEquipos] = await pool.query(
       `SELECT 
           pe.tipo_pago,
@@ -266,7 +317,7 @@ export const getCajaActual = async (req, res) => {
       [punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
     )
 
-    // Totales de pagos de REPARACIONES (tabla pagos_reparacion) ligados a la sesi?n actual
+    // Totales de pagos de REPARACIONES (tabla pagos_reparacion) ligados a la sesión actual
     const [totalesReparaciones] = await pool.query(
       `SELECT 
           pr.metodo_pago AS tipo_pago,
@@ -318,6 +369,7 @@ export const getCajaActual = async (req, res) => {
         compras: totalesCompras,
         reparaciones: totalesReparaciones,
         pagos_cuenta_corriente: totalesPagosCuentaCorriente,
+        pagos_devoluciones: totalesPagosDevoluciones,
       },
     })
   } catch (error) {
@@ -378,7 +430,7 @@ export const getSesionCajaPorId = async (req, res) => {
       if (row.tipo === "egreso") movimientosPorOrigen[origen].egresos += Number(row.total) || 0
     })
 
-    const [totalesVentasProductos] = await pool.query(
+    const [totalesVentasProductosRaw] = await pool.query(
       `SELECT p.tipo_pago, SUM(p.monto) AS total
        FROM pagos p
        JOIN ventas v ON p.referencia_id = v.id AND p.tipo_referencia = 'venta'
@@ -387,6 +439,11 @@ export const getSesionCajaPorId = async (req, res) => {
          ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
        GROUP BY p.tipo_pago`,
       [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
+    )
+    const totalesPagosDevoluciones = await queryTotalesPagosDevolucion(pool, sesion)
+    const totalesVentasProductos = fusionarTotalesPorTipoPago(
+      totalesVentasProductosRaw,
+      totalesPagosDevoluciones,
     )
     const [totalesVentasEquipos] = await pool.query(
       `SELECT pe.tipo_pago, SUM(pe.monto_ars) AS total
@@ -434,6 +491,7 @@ export const getSesionCajaPorId = async (req, res) => {
         ventas_equipos: totalesVentasEquipos,
         reparaciones: totalesReparaciones,
         pagos_cuenta_corriente: totalesPagosCuentaCorriente,
+        pagos_devoluciones: totalesPagosDevoluciones,
       },
     })
   } catch (error) {
@@ -910,11 +968,39 @@ export const getMovimientosCompletosCaja = async (req, res) => {
         normalizeRow(row, "venta", `Venta ${row.numero_factura || row.referencia_id}`),
       )
 
+      const [pagosDev] = await pool.query(
+        `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, p.notas
+         FROM pagos p
+         JOIN usuarios u ON p.usuario_id = u.id
+         WHERE p.tipo_referencia = 'devolucion'
+           AND p.anulado = 0
+           AND (
+             p.caja_sesion_id = ?
+             OR (
+               p.caja_sesion_id IS NULL
+               AND p.punto_venta_id = ?
+               AND p.fecha >= ? AND p.fecha <= ?
+             )
+           )
+           ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
+         ORDER BY p.fecha DESC`,
+        [caja_sesion_id, punto_venta_id, fechaDesde, fechaHasta],
+      )
+      pagosDev.forEach((row) =>
+        todos.push(
+          normalizeRow(row, "venta", row.notas || `Diferencia devolución #${row.referencia_id}`),
+        ),
+      )
+
       const [manual] = await pool.query(
         `SELECT cm.id, cm.fecha, cm.concepto, cm.monto, cm.metodo_pago AS tipo_pago, cm.tipo, u.nombre AS usuario_nombre, cm.origen, cm.tipo_referencia
          FROM caja_movimientos cm
          JOIN usuarios u ON cm.usuario_id = u.id
-         WHERE cm.caja_sesion_id = ? AND (cm.origen = 'general' OR cm.origen IS NULL)
+         WHERE cm.caja_sesion_id = ?
+           AND (
+             cm.origen = 'general' OR cm.origen IS NULL OR cm.origen = 'ventas_productos'
+             OR cm.tipo_referencia = 'devolucion'
+           )
          ORDER BY cm.fecha DESC`,
         [caja_sesion_id],
       )
@@ -1014,6 +1100,30 @@ export const getMovimientosCompletosCaja = async (req, res) => {
       )
       pagosVenta.forEach((row) =>
         todos.push(normalizeRow(row, "venta", `Venta ${row.numero_factura || row.referencia_id}`)),
+      )
+
+      const [pagosDevGen] = await pool.query(
+        `SELECT p.id, p.fecha, p.monto, p.tipo_pago, p.referencia_id, u.nombre AS usuario_nombre, p.notas
+         FROM pagos p
+         JOIN usuarios u ON p.usuario_id = u.id
+         WHERE p.tipo_referencia = 'devolucion'
+           AND p.anulado = 0
+           AND (
+             p.caja_sesion_id = ?
+             OR (
+               p.caja_sesion_id IS NULL
+               AND p.punto_venta_id = ?
+               AND p.fecha >= ? AND p.fecha <= ?
+             )
+           )
+           ${SQL_EXCL_PAGO_VENTA_SOLO_CC}
+         ORDER BY p.fecha DESC`,
+        [caja_sesion_id, punto_venta_id, fechaDesde, fechaHasta],
+      )
+      pagosDevGen.forEach((row) =>
+        todos.push(
+          normalizeRow(row, "venta", row.notas || `Diferencia devolución #${row.referencia_id}`),
+        ),
       )
 
       const [pagosAbonoCcGen] = await pool.query(

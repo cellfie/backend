@@ -2,6 +2,23 @@ import pool from "../../db.js"
 import { validationResult } from "express-validator"
 import { formatearFechaParaDB } from "../../utils/dateUtils.js"
 
+const esTipoPagoCuentaCorriente = (tipoPago) => {
+  const t = String(tipoPago || "")
+    .toLowerCase()
+    .trim()
+  return t === "cuenta" || t === "cuenta corriente" || t.includes("cuenta corriente")
+}
+
+const obtenerSesionCajaAbierta = async (connection, puntoVentaId) => {
+  const [sesiones] = await connection.query(
+    `SELECT id FROM caja_sesiones
+     WHERE punto_venta_id = ? AND estado = 'abierta'
+     ORDER BY fecha_apertura DESC LIMIT 1`,
+    [puntoVentaId],
+  )
+  return sesiones.length > 0 ? sesiones[0].id : null
+}
+
 // Obtener todas las devoluciones
 export const getDevoluciones = async (req, res) => {
   try {
@@ -116,7 +133,14 @@ export const createDevolucion = async (req, res) => {
       tipo_pago = null,
       pagos = [],
       cliente_id = null,
+      // 'cuenta_corriente' (default) | 'efectivo'
+      tipo_reembolso = "cuenta_corriente",
     } = req.body
+    const diferenciaNum = Number(diferencia) || 0
+    const modoReembolso =
+      String(tipo_reembolso || "cuenta_corriente").toLowerCase() === "efectivo"
+        ? "efectivo"
+        : "cuenta_corriente"
 
     // Verificar que la venta existe y no est? anulada
     const [ventas] = await connection.query("SELECT * FROM ventas WHERE id = ? AND anulada = 0", [venta_id])
@@ -335,101 +359,141 @@ export const createDevolucion = async (req, res) => {
     // Marcar la venta como que tiene devoluciones
     await connection.query(`UPDATE ventas SET tiene_devoluciones = 1 WHERE id = ?`, [venta_id])
 
-    // Si hay diferencia y es a favor del cliente (diferencia < 0), registrar en cuenta corriente
-    if (diferencia < 0 && cliente_id) {
-      // Verificar si el cliente tiene cuenta corriente
-      const [cuentas] = await connection.query("SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1", [
-        cliente_id,
-      ])
+    // Diferencia a favor del cliente (reembolso)
+    if (diferenciaNum < 0) {
+      const montoReembolso = Math.abs(diferenciaNum)
 
-      if (cuentas.length > 0) {
-        const cuenta = cuentas[0]
-        const saldoAnterior = Number.parseFloat(cuenta.saldo)
-        const montoAbono = Math.abs(Number.parseFloat(diferencia)) // Convertir a positivo para restar del saldo
-        const nuevoSaldo = saldoAnterior - montoAbono
+      if (modoReembolso === "efectivo") {
+        const cajaSesionId = await obtenerSesionCajaAbierta(connection, venta.punto_venta_id)
+        if (!cajaSesionId) {
+          await connection.rollback()
+          return res.status(400).json({
+            message:
+              "No hay caja abierta en este punto de venta. Abrí la caja para devolver efectivo o acreditá a cuenta corriente.",
+          })
+        }
 
-        // Actualizar el saldo de la cuenta corriente
-        await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
-          nuevoSaldo,
-          fechaActual,
-          cuenta.id,
-        ])
-
-        // Registrar el movimiento en la cuenta corriente
         await connection.query(
-          `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
+          `INSERT INTO caja_movimientos (
+            caja_sesion_id, tipo, concepto, monto, metodo_pago, origen,
+            usuario_id, fecha, referencia_id, tipo_referencia
+          ) VALUES (?, 'egreso', ?, ?, 'Efectivo', 'ventas_productos', ?, ?, ?, 'devolucion')`,
           [
-            cuenta.id,
-            montoAbono,
-            saldoAnterior.toFixed(2),
-            nuevoSaldo.toFixed(2),
-            devolucionId,
-            fechaActual,
+            cajaSesionId,
+            `Reembolso devolución - Venta #${venta.numero_factura}`,
+            montoReembolso,
             req.user.id,
-            `Cr?dito por devoluci?n - Venta #${venta.numero_factura}`,
+            fechaActual,
+            devolucionId,
           ],
         )
       } else {
-        // Si el cliente no tiene cuenta corriente, crearla
-        const saldoInicial = 0
-        const montoAbono = Math.abs(Number.parseFloat(diferencia))
-        const nuevoSaldo = saldoInicial - montoAbono
+        if (!cliente_id) {
+          await connection.rollback()
+          return res.status(400).json({
+            message: "Se requiere un cliente para acreditar el reembolso a cuenta corriente",
+          })
+        }
 
-        const [resultCuenta] = await connection.query(
-          "INSERT INTO cuentas_corrientes (cliente_id, saldo, activo) VALUES (?, ?, 1)",
-          [cliente_id, nuevoSaldo], // Saldo negativo (a favor del cliente)
+        const [cuentas] = await connection.query(
+          "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
+          [cliente_id],
         )
 
-        const cuentaCorrienteId = resultCuenta.insertId
+        if (cuentas.length > 0) {
+          const cuenta = cuentas[0]
+          const saldoAnterior = Number.parseFloat(cuenta.saldo)
+          const nuevoSaldo = saldoAnterior - montoReembolso
 
-        // Registrar el movimiento en la cuenta corriente
-        await connection.query(
-          `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
-          [
-            cuentaCorrienteId,
-            montoAbono,
-            saldoInicial.toFixed(2), // Saldo anterior (cuenta nueva)
-            nuevoSaldo.toFixed(2), // Nuevo saldo
-            devolucionId,
-            fechaActual,
-            req.user.id,
-            `Cr?dito por devoluci?n - Venta #${venta.numero_factura}`,
-          ],
-        )
+          await connection.query(
+            `UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`,
+            [nuevoSaldo, fechaActual, cuenta.id],
+          )
+
+          await connection.query(
+            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
+            [
+              cuenta.id,
+              montoReembolso,
+              saldoAnterior.toFixed(2),
+              nuevoSaldo.toFixed(2),
+              devolucionId,
+              fechaActual,
+              req.user.id,
+              `Crédito por devolución - Venta #${venta.numero_factura}`,
+            ],
+          )
+        } else {
+          const saldoInicial = 0
+          const nuevoSaldo = saldoInicial - montoReembolso
+
+          const [resultCuenta] = await connection.query(
+            "INSERT INTO cuentas_corrientes (cliente_id, saldo, activo) VALUES (?, ?, 1)",
+            [cliente_id, nuevoSaldo],
+          )
+
+          await connection.query(
+            `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'pago', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
+            [
+              resultCuenta.insertId,
+              montoReembolso,
+              saldoInicial.toFixed(2),
+              nuevoSaldo.toFixed(2),
+              devolucionId,
+              fechaActual,
+              req.user.id,
+              `Crédito por devolución - Venta #${venta.numero_factura}`,
+            ],
+          )
+        }
       }
     }
-    // Si hay diferencia y es a cargo del cliente (diferencia > 0), registrar el/los pago(s)
-    else if (diferencia > 0) {
-      // Normalizar la lista de pagos: admite m?ltiples m?todos (nuevo) o uno solo (legacy)
+    // Diferencia a cargo del cliente (cobra en caja, salvo cuenta corriente)
+    else if (diferenciaNum > 0) {
       const pagosProcesar =
         Array.isArray(pagos) && pagos.length > 0
           ? pagos.map((p) => ({ tipo_pago: p.tipo_pago, monto: Number(p.monto || 0) }))
-          : [{ tipo_pago, monto: Number(diferencia) }]
+          : [{ tipo_pago, monto: diferenciaNum }]
 
-      // Validar que cada pago tenga una forma de pago v?lida
       if (pagosProcesar.some((p) => !p.tipo_pago || String(p.tipo_pago).trim() === "")) {
         await connection.rollback()
-        return res.status(400).json({ message: "Cada pago debe tener una forma de pago v?lida" })
+        return res.status(400).json({ message: "Cada pago debe tener una forma de pago válida" })
       }
 
-      // Validar que la suma de los pagos cubra exactamente la diferencia
       const totalPagos = pagosProcesar.reduce((sum, p) => sum + Number(p.monto || 0), 0)
-      if (Math.abs(totalPagos - Number(diferencia)) > 0.01) {
+      if (Math.abs(totalPagos - diferenciaNum) > 0.01) {
         await connection.rollback()
         return res.status(400).json({
-          message: `El total de los pagos (${totalPagos.toFixed(2)}) no coincide con la diferencia a pagar (${Number(
-            diferencia,
-          ).toFixed(2)})`,
+          message: `El total de los pagos (${totalPagos.toFixed(2)}) no coincide con la diferencia a pagar (${diferenciaNum.toFixed(2)})`,
         })
+      }
+
+      const hayPagoCaja = pagosProcesar.some(
+        (p) => Number(p.monto || 0) > 0 && !esTipoPagoCuentaCorriente(p.tipo_pago),
+      )
+      let cajaSesionId = null
+      if (hayPagoCaja) {
+        cajaSesionId = await obtenerSesionCajaAbierta(connection, venta.punto_venta_id)
+        if (!cajaSesionId) {
+          await connection.rollback()
+          return res.status(400).json({
+            message:
+              "No hay caja abierta en este punto de venta. Abrí la caja para cobrar la diferencia en efectivo/transferencia/tarjeta.",
+          })
+        }
       }
 
       for (const pagoItem of pagosProcesar) {
         const montoPago = Number(pagoItem.monto || 0)
         if (montoPago <= 0) continue
 
-        // Registrar el pago individual
+        const esCuenta = esTipoPagoCuentaCorriente(pagoItem.tipo_pago)
+
         await connection.query(
-          `INSERT INTO pagos (monto, fecha, referencia_id, tipo_referencia, tipo_pago, cliente_id, usuario_id, punto_venta_id, notas) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?, ?)`,
+          `INSERT INTO pagos (
+            monto, fecha, referencia_id, tipo_referencia, tipo_pago,
+            cliente_id, usuario_id, punto_venta_id, notas, caja_sesion_id
+          ) VALUES (?, ?, ?, 'devolucion', ?, ?, ?, ?, ?, ?)`,
           [
             montoPago,
             fechaActual,
@@ -438,13 +502,12 @@ export const createDevolucion = async (req, res) => {
             cliente_id,
             req.user.id,
             venta.punto_venta_id,
-            `Pago por diferencia en devoluci?n - Venta #${venta.numero_factura}`,
+            `Pago por diferencia en devolución - Venta #${venta.numero_factura}`,
+            esCuenta ? null : cajaSesionId,
           ],
         )
 
-        // Si este pago es cuenta corriente, imputar su monto al saldo del cliente
-        if (pagoItem.tipo_pago && pagoItem.tipo_pago.toLowerCase().includes("cuenta") && cliente_id) {
-          // Verificar si el cliente tiene cuenta corriente
+        if (esCuenta && cliente_id) {
           const [cuentas] = await connection.query(
             "SELECT * FROM cuentas_corrientes WHERE cliente_id = ? AND activo = 1",
             [cliente_id],
@@ -453,16 +516,13 @@ export const createDevolucion = async (req, res) => {
           if (cuentas.length > 0) {
             const cuenta = cuentas[0]
             const saldoAnterior = Number.parseFloat(cuenta.saldo)
-            const nuevoSaldo = saldoAnterior + montoPago // Aumentar el saldo (es un cargo)
+            const nuevoSaldo = saldoAnterior + montoPago
 
-            // Actualizar el saldo de la cuenta corriente
-            await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
-              nuevoSaldo,
-              fechaActual,
-              cuenta.id,
-            ])
+            await connection.query(
+              `UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`,
+              [nuevoSaldo, fechaActual, cuenta.id],
+            )
 
-            // Registrar el movimiento en la cuenta corriente
             await connection.query(
               `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
               [
@@ -473,11 +533,10 @@ export const createDevolucion = async (req, res) => {
                 devolucionId,
                 fechaActual,
                 req.user.id,
-                `Cargo por diferencia en devoluci?n - Venta #${venta.numero_factura}`,
+                `Cargo por diferencia en devolución - Venta #${venta.numero_factura}`,
               ],
             )
           } else {
-            // Si el cliente no tiene cuenta corriente, crearla
             const saldoInicial = 0
             const nuevoSaldo = saldoInicial + montoPago
 
@@ -486,20 +545,17 @@ export const createDevolucion = async (req, res) => {
               [cliente_id, nuevoSaldo],
             )
 
-            const cuentaCorrienteId = resultCuenta.insertId
-
-            // Registrar el movimiento en la cuenta corriente
             await connection.query(
               `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, 'cargo', ?, ?, ?, ?, 'devolucion', ?, ?, ?)`,
               [
-                cuentaCorrienteId,
+                resultCuenta.insertId,
                 montoPago,
-                saldoInicial.toFixed(2), // Saldo anterior (cuenta nueva)
-                nuevoSaldo.toFixed(2), // Nuevo saldo
+                saldoInicial.toFixed(2),
+                nuevoSaldo.toFixed(2),
                 devolucionId,
                 fechaActual,
                 req.user.id,
-                `Cargo por diferencia en devoluci?n - Venta #${venta.numero_factura}`,
+                `Cargo por diferencia en devolución - Venta #${venta.numero_factura}`,
               ],
             )
           }
@@ -646,52 +702,82 @@ export const anularDevolucion = async (req, res) => {
       )
     }
 
-    // Si hubo diferencia y se registr? en cuenta corriente, revertir
-    if (devolucion.diferencia !== 0 && devolucion.cliente_id) {
-      // Verificar si el cliente tiene cuenta corriente
+    const diferenciaNum = Number(devolucion.diferencia) || 0
+
+    // Anular pagos de diferencia (impactan caja si tenían caja_sesion_id)
+    await connection.query(
+      `UPDATE pagos SET anulado = 1
+       WHERE tipo_referencia = 'devolucion' AND referencia_id = ? AND anulado = 0`,
+      [id],
+    )
+
+    // Revertir egreso de reembolso en efectivo (si existió)
+    await connection.query(
+      `DELETE FROM caja_movimientos
+       WHERE tipo_referencia = 'devolucion' AND referencia_id = ?`,
+      [id],
+    )
+
+    // Revertir cuenta corriente solo si hubo movimientos CC de esta devolución
+    const [movsCc] = await connection.query(
+      `SELECT m.*, cc.cliente_id
+       FROM movimientos_cuenta_corriente m
+       JOIN cuentas_corrientes cc ON m.cuenta_corriente_id = cc.id
+       WHERE m.tipo_referencia = 'devolucion' AND m.referencia_id = ?
+       ORDER BY m.id ASC`,
+      [id],
+    )
+
+    if (movsCc.length > 0 && devolucion.cliente_id) {
       const [cuentas] = await connection.query("SELECT * FROM cuentas_corrientes WHERE cliente_id = ?", [
         devolucion.cliente_id,
       ])
 
       if (cuentas.length > 0) {
         const cuenta = cuentas[0]
-        const saldoAnterior = Number.parseFloat(cuenta.saldo)
+        let saldo = Number.parseFloat(cuenta.saldo)
 
-        let nuevoSaldo
-        if (devolucion.diferencia < 0) {
-          // Si fue un cr?dito a favor, ahora sumamos al saldo
-          nuevoSaldo = saldoAnterior + Math.abs(Number.parseFloat(devolucion.diferencia))
-        } else {
-          // Si fue un cargo, ahora restamos del saldo
-          nuevoSaldo = saldoAnterior - Number.parseFloat(devolucion.diferencia)
+        // Revertir en orden inverso
+        for (let i = movsCc.length - 1; i >= 0; i--) {
+          const mov = movsCc[i]
+          const monto = Number.parseFloat(mov.monto) || 0
+          const saldoAnterior = saldo
+          // cargo aumentó saldo → al anular restamos; pago/crédito bajó saldo → al anular sumamos
+          if (mov.tipo === "cargo") {
+            saldo = saldo - monto
+          } else {
+            saldo = saldo + monto
+          }
+
+          await connection.query(
+            `INSERT INTO movimientos_cuenta_corriente (
+              cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo,
+              referencia_id, tipo_referencia, fecha, usuario_id, notas
+            ) VALUES (?, ?, ?, ?, ?, ?, 'anulacion_devolucion', ?, ?, ?)`,
+            [
+              cuenta.id,
+              mov.tipo === "cargo" ? "pago" : "cargo",
+              monto,
+              saldoAnterior.toFixed(2),
+              saldo.toFixed(2),
+              id,
+              fechaActual,
+              req.user.id,
+              `Anulación de devolución - Venta #${venta.numero_factura}: ${motivo}`,
+            ],
+          )
         }
 
-        // Actualizar el saldo de la cuenta corriente
-        await connection.query(`UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`, [
-          nuevoSaldo,
-          fechaActual,
-          cuenta.id,
-        ])
-
-        // Registrar movimiento en la cuenta corriente
         await connection.query(
-          `INSERT INTO movimientos_cuenta_corriente (cuenta_corriente_id, tipo, monto, saldo_anterior, saldo_nuevo, referencia_id, tipo_referencia, fecha, usuario_id, notas) VALUES (?, ?, ?, ?, ?, ?, 'anulacion_devolucion', ?, ?, ?)`,
-          [
-            cuenta.id,
-            devolucion.diferencia < 0 ? "cargo" : "pago",
-            Math.abs(Number.parseFloat(devolucion.diferencia)),
-            saldoAnterior.toFixed(2),
-            nuevoSaldo.toFixed(2),
-            id,
-            fechaActual,
-            req.user.id,
-            `Anulaci?n de devoluci?n - Venta #${venta.numero_factura}: ${motivo}`,
-          ],
+          `UPDATE cuentas_corrientes SET saldo = ?, fecha_ultimo_movimiento = ? WHERE id = ?`,
+          [saldo, fechaActual, cuenta.id],
         )
       }
+    } else if (diferenciaNum !== 0 && !Number.isNaN(diferenciaNum)) {
+      // Sin movimientos CC ni egreso de caja: no hay nada más que revertir en dinero
     }
 
-    // Anular la devoluci?n
+    // Anular la devolución
     await connection.query(
       `UPDATE devoluciones SET anulada = 1, fecha_anulacion = ?, motivo_anulacion = ? WHERE id = ?`,
       [fechaActual, motivo, id],
