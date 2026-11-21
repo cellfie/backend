@@ -15,6 +15,137 @@ function etiquetaMetodoPagoParaHistorial(metodo) {
   return metodo || "método desconocido"
 }
 
+/**
+ * Descuenta stock de repuestos vinculados a la reparación.
+ * Permite stock negativo. Solo afecta líneas con repuesto_id y stock_descontado = 0.
+ */
+async function descontarStockRepuestosReparacion(connection, reparacion, usuarioId) {
+  const puntoVentaId = reparacion.punto_venta_id
+  if (!puntoVentaId) return
+
+  const [detalles] = await connection.query(
+    `SELECT id, repuesto_id, cantidad, descripcion
+     FROM detalles_reparacion
+     WHERE reparacion_id = ?
+       AND repuesto_id IS NOT NULL
+       AND COALESCE(stock_descontado, 0) = 0`,
+    [reparacion.id],
+  )
+
+  const fecha = formatearFechaParaDB()
+  for (const d of detalles) {
+    const cantidad = Number(d.cantidad)
+    const cant = Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1
+    const repuestoId = Number(d.repuesto_id)
+
+    const [inv] = await connection.query(
+      `SELECT id, stock FROM inventario_repuestos
+       WHERE repuesto_id = ? AND punto_venta_id = ?
+       FOR UPDATE`,
+      [repuestoId, puntoVentaId],
+    )
+
+    if (inv.length === 0) {
+      await connection.query(
+        `INSERT INTO inventario_repuestos (repuesto_id, punto_venta_id, stock) VALUES (?, ?, ?)`,
+        [repuestoId, puntoVentaId, -cant],
+      )
+    } else {
+      await connection.query(
+        `UPDATE inventario_repuestos SET stock = stock - ? WHERE repuesto_id = ? AND punto_venta_id = ?`,
+        [cant, repuestoId, puntoVentaId],
+      )
+    }
+
+    try {
+      await connection.query(
+        `INSERT INTO log_inventario_repuestos (
+          repuesto_id, punto_venta_id, cantidad, tipo_movimiento,
+          referencia_id, usuario_id, fecha, notas
+        ) VALUES (?, ?, ?, 'ajuste', ?, ?, ?, ?)`,
+        [
+          repuestoId,
+          puntoVentaId,
+          -cant,
+          reparacion.id,
+          usuarioId,
+          fecha,
+          `Descuento por reparación terminada #${reparacion.numero_ticket || reparacion.id}${
+            d.descripcion ? `: ${d.descripcion}` : ""
+          }`,
+        ],
+      )
+    } catch (error) {
+      console.warn("No se pudo registrar en log_inventario_repuestos:", error?.message || error)
+    }
+
+    await connection.query(`UPDATE detalles_reparacion SET stock_descontado = 1 WHERE id = ?`, [d.id])
+  }
+}
+
+/** Restaura stock de líneas ya descontadas (cancelación o vuelta a pendiente). */
+async function restaurarStockRepuestosReparacion(connection, reparacion, usuarioId, motivo = "Reversión") {
+  const puntoVentaId = reparacion.punto_venta_id
+  if (!puntoVentaId) return
+
+  const [detalles] = await connection.query(
+    `SELECT id, repuesto_id, cantidad, descripcion
+     FROM detalles_reparacion
+     WHERE reparacion_id = ?
+       AND repuesto_id IS NOT NULL
+       AND COALESCE(stock_descontado, 0) = 1`,
+    [reparacion.id],
+  )
+
+  const fecha = formatearFechaParaDB()
+  for (const d of detalles) {
+    const cantidad = Number(d.cantidad)
+    const cant = Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1
+    const repuestoId = Number(d.repuesto_id)
+
+    const [inv] = await connection.query(
+      `SELECT id FROM inventario_repuestos
+       WHERE repuesto_id = ? AND punto_venta_id = ?
+       FOR UPDATE`,
+      [repuestoId, puntoVentaId],
+    )
+
+    if (inv.length === 0) {
+      await connection.query(
+        `INSERT INTO inventario_repuestos (repuesto_id, punto_venta_id, stock) VALUES (?, ?, ?)`,
+        [repuestoId, puntoVentaId, cant],
+      )
+    } else {
+      await connection.query(
+        `UPDATE inventario_repuestos SET stock = stock + ? WHERE repuesto_id = ? AND punto_venta_id = ?`,
+        [cant, repuestoId, puntoVentaId],
+      )
+    }
+
+    try {
+      await connection.query(
+        `INSERT INTO log_inventario_repuestos (
+          repuesto_id, punto_venta_id, cantidad, tipo_movimiento,
+          referencia_id, usuario_id, fecha, notas
+        ) VALUES (?, ?, ?, 'ajuste', ?, ?, ?, ?)`,
+        [
+          repuestoId,
+          puntoVentaId,
+          cant,
+          reparacion.id,
+          usuarioId,
+          fecha,
+          `${motivo} reparación #${reparacion.numero_ticket || reparacion.id}`,
+        ],
+      )
+    } catch (error) {
+      console.warn("No se pudo registrar en log_inventario_repuestos:", error?.message || error)
+    }
+
+    await connection.query(`UPDATE detalles_reparacion SET stock_descontado = 0 WHERE id = ?`, [d.id])
+  }
+}
+
 // Función para generar número de ticket único para reparaciones
 const generarNumeroTicket = async (puntoVentaId) => {
   const fecha = new Date()
@@ -72,13 +203,17 @@ export const getReparaciones = async (req, res) => {
     `
     const queryParams = []
 
-    // Aplicar filtros si se proporcionan
+    // Fechas: si filtramos entregadas, usar fecha_entrega (no fecha_ingreso).
+    // Así "hoy + entregadas" muestra lo entregado hoy aunque se haya ingresado otro día.
+    const usarFechaEntrega = estado === "entregada"
+    const columnaFecha = usarFechaEntrega ? "r.fecha_entrega" : "r.fecha_ingreso"
+
     if (fecha_inicio) {
-      query += " AND DATE(r.fecha_ingreso) >= ?"
+      query += ` AND DATE(${columnaFecha}) >= ?`
       queryParams.push(fecha_inicio)
     }
     if (fecha_fin) {
-      query += " AND DATE(r.fecha_ingreso) <= ?"
+      query += ` AND DATE(${columnaFecha}) <= ?`
       queryParams.push(fecha_fin)
     }
     if (cliente_id) {
@@ -92,6 +227,10 @@ export const getReparaciones = async (req, res) => {
     if (estado) {
       query += " AND r.estado = ?"
       queryParams.push(estado)
+    }
+    // Evitar filas sin fecha de entrega cuando se filtra por ese campo
+    if (usarFechaEntrega && (fecha_inicio || fecha_fin)) {
+      query += " AND r.fecha_entrega IS NOT NULL"
     }
 
     // Búsqueda por texto (cliente, ticket, id, marca/modelo del equipo).
@@ -116,7 +255,9 @@ export const getReparaciones = async (req, res) => {
       queryParams.push(like, like, like, like, like, like, like, like)
     }
 
-    query += " ORDER BY r.fecha_ingreso DESC"
+    query += usarFechaEntrega
+      ? " ORDER BY r.fecha_entrega DESC, r.id DESC"
+      : " ORDER BY r.fecha_ingreso DESC"
 
     // Sin fechas ni búsqueda el dataset puede ser enorme (N+1 de equipo/detalles/pagos).
     // Limitar solo en ese caso extremo; con search o fechas el volumen ya es manejable.
@@ -394,18 +535,24 @@ export const createReparacion = async (req, res) => {
       ],
     )
 
-    // Insertar los detalles de la reparación
+    // Insertar los detalles de la reparación (repuesto_id opcional para descontar stock al terminar)
     for (const detalle of reparaciones) {
+      const repuestoId = detalle.repuesto_id ? Number(detalle.repuesto_id) : null
+      const cantidadRaw = Number(detalle.cantidad)
+      const cantidad = Number.isFinite(cantidadRaw) && cantidadRaw > 0 ? cantidadRaw : 1
       await connection.query(
         `
         INSERT INTO detalles_reparacion (
           reparacion_id, 
           descripcion, 
-          precio, 
+          precio,
+          repuesto_id,
+          cantidad,
+          stock_descontado,
           completado
-        ) VALUES (?, ?, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, 0, 0)
       `,
-        [reparacionId, detalle.descripcion, detalle.precio],
+        [reparacionId, detalle.descripcion, detalle.precio, repuestoId, cantidad],
       )
     }
 
@@ -631,25 +778,53 @@ export const updateReparacion = async (req, res) => {
       [notas || null, id],
     )
 
+    // Si ya se había descontado stock, restaurarlo antes de reemplazar detalles
+    await restaurarStockRepuestosReparacion(
+      connection,
+      reparacionesExistentes[0],
+      req.user.id,
+      "Reversión por edición de detalles",
+    )
+
     // Eliminar los detalles existentes
     await connection.query("DELETE FROM detalles_reparacion WHERE reparacion_id = ?", [id])
 
     // Insertar los nuevos detalles
     let totalReparacion = 0
     for (const detalle of reparaciones) {
+      const repuestoId = detalle.repuesto_id ? Number(detalle.repuesto_id) : null
+      const cantidadRaw = Number(detalle.cantidad)
+      const cantidad = Number.isFinite(cantidadRaw) && cantidadRaw > 0 ? cantidadRaw : 1
       await connection.query(
         `
         INSERT INTO detalles_reparacion (
           reparacion_id, 
           descripcion, 
-          precio, 
+          precio,
+          repuesto_id,
+          cantidad,
+          stock_descontado,
           completado
-        ) VALUES (?, ?, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, 0, 0)
       `,
-        [id, detalle.descripcion, detalle.precio],
+        [id, detalle.descripcion, detalle.precio, repuestoId, cantidad],
       )
 
       totalReparacion += Number.parseFloat(detalle.precio)
+    }
+
+    // Si la reparación ya estaba terminada/entregada, volver a descontar stock
+    const estadoActual = reparacionesExistentes[0].estado
+    if (estadoActual === "terminada" || estadoActual === "entregada") {
+      await descontarStockRepuestosReparacion(connection, reparacionesExistentes[0], req.user.id)
+      await connection.query(
+        `
+        UPDATE detalles_reparacion
+        SET completado = 1, fecha_completado = ?
+        WHERE reparacion_id = ?
+      `,
+        [formatearFechaParaDB(), id],
+      )
     }
 
     // Actualizar el total de la reparación
@@ -813,7 +988,9 @@ export const updateEstadoReparacion = async (req, res) => {
 
     await connection.query(query, queryParams)
 
-    // Si se está marcando como terminada, marcar todos los detalles como completados - CAMBIO: usar formatearFechaParaDB()
+    const estadoAnterior = reparacion.estado
+
+    // Al terminar: completar detalles y descontar stock de repuestos vinculados (permite negativo)
     if (estado === "terminada") {
       await connection.query(
         `
@@ -822,6 +999,33 @@ export const updateEstadoReparacion = async (req, res) => {
         WHERE reparacion_id = ? AND completado = 0
       `,
         [formatearFechaParaDB(), id],
+      )
+      if (estadoAnterior !== "terminada" && estadoAnterior !== "entregada") {
+        await descontarStockRepuestosReparacion(connection, reparacion, req.user.id)
+      }
+    }
+
+    // Si vuelve a pendiente desde terminada, devolver stock
+    if (estado === "pendiente" && (estadoAnterior === "terminada" || estadoAnterior === "entregada")) {
+      await restaurarStockRepuestosReparacion(
+        connection,
+        reparacion,
+        req.user.id,
+        "Reversión por cambio a pendiente",
+      )
+      await connection.query(
+        `UPDATE detalles_reparacion SET completado = 0, fecha_completado = NULL WHERE reparacion_id = ?`,
+        [id],
+      )
+    }
+
+    // Cancelación vía cambio de estado: restaurar stock si se había descontado
+    if (estado === "cancelada" && estadoAnterior !== "cancelada") {
+      await restaurarStockRepuestosReparacion(
+        connection,
+        reparacion,
+        req.user.id,
+        "Reversión por cancelación",
       )
     }
 
@@ -941,6 +1145,14 @@ export const cancelarReparacion = async (req, res) => {
         }
       }
     }
+
+    // Devolver stock de repuestos si ya se había descontado al terminar
+    await restaurarStockRepuestosReparacion(
+      connection,
+      reparaciones[0],
+      req.user.id,
+      "Reversión por cancelación",
+    )
 
     // Actualizar el estado de la reparación a cancelada
     await connection.query(

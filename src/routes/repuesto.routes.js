@@ -32,7 +32,7 @@ const validateRepuesto = [
 const validateInventario = [
   check("repuesto_id").isInt().withMessage("ID de repuesto inválido"),
   check("punto_venta_id").isInt().withMessage("ID de punto de venta inválido"),
-  check("stock").isInt({ min: 0 }).withMessage("El stock debe ser un número no negativo"),
+  check("stock").isInt().withMessage("El stock debe ser un número entero"),
 ]
 
 // Rutas para repuestos

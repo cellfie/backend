@@ -50,10 +50,10 @@ function normalizarSesionCajaParaAPI(sesion) {
 }
 
 /**
- * Saldo te?rico para arqueo = mismo criterio que el "Balance total" en la UI de caja:
- * apertura + ventas (productos + equipos + reparaciones) + ingresos manuales (origen "general")
- * ? egresos manuales (origen "general").
- * No usar solo la suma global de caja_movimientos (excluir?a ventas registradas en pagos).
+ * Saldo teórico para arqueo = mismo criterio que el "Balance total" en la UI de caja:
+ * apertura + ventas (productos + equipos + reparaciones) + pagos CC
+ * + ingresos de caja_movimientos − egresos de caja_movimientos (manuales y retiros).
+ * Las ventas viven en pagos; los egresos/ingresos manuales en caja_movimientos.
  */
 async function computeSaldoTeoricoArqueo(sesion) {
   const id = sesion.id
@@ -100,17 +100,17 @@ async function computeSaldoTeoricoArqueo(sesion) {
     [id, punto_venta_id, sesion.fecha_apertura, sesion.fecha_cierre],
   )
 
-  const [movimientosPorOrigenRows] = await pool.query(
-    `SELECT origen, tipo, SUM(monto) AS total FROM caja_movimientos WHERE caja_sesion_id = ? GROUP BY origen, tipo`,
+  // Todos los movimientos de caja_movimientos afectan el efectivo físico
+  // (egreso manual, retiro empleado, etc.), sin filtrar por origen.
+  const [movimientosCaja] = await pool.query(
+    `SELECT tipo, SUM(monto) AS total FROM caja_movimientos WHERE caja_sesion_id = ? GROUP BY tipo`,
     [id],
   )
-  let ingGeneral = 0
-  let egrGeneral = 0
-  movimientosPorOrigenRows.forEach((row) => {
-    const origen = row.origen || "general"
-    if (origen !== "general") return
-    if (row.tipo === "ingreso") ingGeneral += Number(row.total) || 0
-    if (row.tipo === "egreso") egrGeneral += Number(row.total) || 0
+  let ingManuales = 0
+  let egrManuales = 0
+  movimientosCaja.forEach((row) => {
+    if (row.tipo === "ingreso") ingManuales += Number(row.total) || 0
+    if (row.tipo === "egreso") egrManuales += Number(row.total) || 0
   })
 
   const montoApertura = Number(sesion.monto_apertura) || 0
@@ -120,8 +120,8 @@ async function computeSaldoTeoricoArqueo(sesion) {
     sumarTotalesFilas(totalesVentasEquipos) +
     sumarTotalesFilas(totalesReparaciones) +
     sumarTotalesFilas(totalesPagosClienteCc) +
-    ingGeneral -
-    egrGeneral
+    ingManuales -
+    egrManuales
   )
 }
 

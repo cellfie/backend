@@ -123,8 +123,8 @@ export const createRepuesto = async (req, res) => {
     return res.status(400).json({ message: "El punto de venta es obligatorio" })
   }
 
-  if (stock !== undefined && (isNaN(stock) || stock < 0)) {
-    return res.status(400).json({ message: "El stock debe ser un número no negativo" })
+  if (stock !== undefined && (stock === "" || Number.isNaN(Number(stock)))) {
+    return res.status(400).json({ message: "El stock debe ser un número válido" })
   }
 
   let precioFinal = 0
@@ -369,11 +369,16 @@ export const searchRepuestos = async (req, res) => {
     const [repuestos] = await pool.query(sql, params)
 
     res.json(
-      repuestos.map((r) => ({
-        ...r,
-        precio: Number.parseFloat(r.precio) || 0,
-        stock: Number.parseInt(r.stock, 10) || 0,
-      })),
+      repuestos.map((r) => {
+        const precio = Number.parseFloat(r.precio)
+        const stock = Number(r.stock)
+        return {
+          ...r,
+          precio: Number.isFinite(precio) ? precio : 0,
+          // Permitir stock negativo (ej. reparaciones terminadas sin stock)
+          stock: Number.isFinite(stock) ? stock : 0,
+        }
+      }),
     )
   } catch (error) {
     console.error("Error al buscar repuestos:", error)
